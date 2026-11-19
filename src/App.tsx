@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
-  Activity, Bot, Brain, Cpu, Folder, Gauge, GitBranch, ListTodo, Play, RefreshCw,
+  Activity, Bot, Brain, Cpu, Folder, Gauge, GitBranch, ListTodo, Play, RefreshCw, Target,
   Send, Settings, ShieldCheck, Trash2, Users, Zap
 } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8765';
 type Message = { role: 'user' | 'assistant'; content: string };
-type Page = 'agent' | 'tasks' | 'heartbeat' | 'memory' | 'resources' | 'agents' | 'improvements';
+type Page = 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resources' | 'agents' | 'improvements';
 type Memory = { id: number; content: string; tags: string; importance: number; created_at: string };
 type HeartbeatRun = { id: number; status: string; summary: string; error: string; started_at: string };
 type HeartbeatConfig = { enabled: number; interval_seconds: number; prompt: string };
@@ -16,7 +16,7 @@ type ResourceSnapshot = {
   storage: { total_bytes: number; free_bytes: number };
 };
 type AgentResult = { mode: string; agents: Record<string, string> };
-type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
+type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };\ntype Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -39,7 +39,7 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([{ role: 'assistant', content: 'Automaton est prêt. Décris une tâche à accomplir dans son espace de travail.' }]);
   const [prompt, setPrompt] = useState('');
   const [taskPrompt, setTaskPrompt] = useState('');
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);\n  const [objectives, setObjectives] = useState<Objective[]>([]);\n  const [goalTitle, setGoalTitle] = useState('');\n  const [goalDescription, setGoalDescription] = useState('');\n  const [goalPriority, setGoalPriority] = useState(3);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Connexion…');
   const [workspace, setWorkspace] = useState<string[]>([]);
@@ -80,16 +80,16 @@ export default function App() {
     setMemories(data.memories);
   }
   async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
-  async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
+  async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }\n  async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); setObjectives(data.objectives); }
   async function refreshAll() {
     setError('');
     await refreshBase();
-    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks()]); }
+    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks(), refreshObjectives()]); }
     catch (e) { setError(e instanceof Error ? e.message : 'Erreur de chargement'); }
   }
   useEffect(() => {
     void refreshAll();
-    const id = window.setInterval(() => { void refreshBase(); void refreshTasks().catch(() => {}); }, 3000);
+    const id = window.setInterval(() => { void refreshBase(); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); }, 3000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -114,6 +114,23 @@ export default function App() {
       await request('/tasks', { method: 'POST', body: JSON.stringify({ prompt: value }) });
       setTaskPrompt(''); await refreshTasks(); setNotice('Tâche ajoutée à la file.');
     } catch (e) { setError(e instanceof Error ? e.message : 'Ajout impossible'); }
+  }
+  async function createObjective() {
+    if (!goalTitle.trim() || !goalDescription.trim()) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await request('/objectives', { method:'POST', body:JSON.stringify({title:goalTitle,description:goalDescription,priority:goalPriority}) });
+      setGoalTitle(''); setGoalDescription(''); await refreshObjectives(); setNotice('Objectif planifié et enregistré.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Planification impossible'); }
+    finally { setBusy(false); }
+  }
+  async function changeObjectiveStatus(id:number,status:'active'|'paused'|'cancelled') {
+    try { await request(`/objectives/${id}/status?status=${status}`,{method:'PUT'}); await refreshObjectives(); }
+    catch(e) { setError(e instanceof Error ? e.message : 'Modification impossible'); }
+  }
+  async function retryObjectiveStep(objectiveId:number,stepId:number) {
+    try { await request(`/objectives/${objectiveId}/steps/${stepId}/retry`,{method:'POST'}); await refreshObjectives(); }
+    catch(e) { setError(e instanceof Error ? e.message : 'Relance impossible'); }
   }
   async function cancelTask(id: number) {
     try { await request(`/tasks/${id}`, { method: 'DELETE' }); await refreshTasks(); }
@@ -165,7 +182,7 @@ export default function App() {
 
   const nav: { id: Page; label: string; icon: typeof Bot }[] = [
     { id: 'agent', label: 'Agent', icon: Bot },
-    { id: 'tasks', label: 'File de tâches', icon: ListTodo },
+    { id: 'tasks', label: 'File de tâches', icon: ListTodo },\n    { id: 'objectives', label: 'Objectifs', icon: Target },
     { id: 'heartbeat', label: 'Heartbeat', icon: Activity },
     { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'resources', label: 'Ressources', icon: Gauge },
@@ -173,7 +190,7 @@ export default function App() {
     { id: 'improvements', label: 'Auto-amélioration', icon: GitBranch }
   ];
   const titles: Record<Page, string> = {
-    agent: 'Agent', tasks: 'File de tâches persistantes', heartbeat: 'Heartbeat', memory: 'Mémoire persistante',
+    agent: 'Agent', tasks: 'File de tâches persistantes', objectives: 'Objectifs autonomes', heartbeat: 'Heartbeat', memory: 'Mémoire persistante',
     resources: 'Gestionnaire de ressources', agents: 'Équipe multi-agents',
     improvements: 'Auto-amélioration'
   };
@@ -232,6 +249,27 @@ export default function App() {
             {task.error && <div className="taskerror">{task.error}</div>}
             {task.status === 'queued' && <button className="dangericon" onClick={() => void cancelTask(task.id)} title="Annuler la tâche"><Trash2 size={16} /></button>}
           </article>) : <p className="empty">La file est vide.</p>}
+        </section>}
+
+
+        {page === 'objectives' && <section className="panel">
+          <div className="panelintro"><Target /><div><h2>Gestionnaire d'objectifs</h2><p>Définis une mission durable. Le planificateur IA crée des étapes ordonnées, puis le worker les exécute une par une via la file SQLite.</p></div></div>
+          <label>Titre de l'objectif<input value={goalTitle} onChange={e=>setGoalTitle(e.target.value)} maxLength={160} placeholder="Ex. Préparer une version stable de mon application" /></label>
+          <label>Description et critères de réussite<textarea rows={4} value={goalDescription} onChange={e=>setGoalDescription(e.target.value)} maxLength={4000} placeholder="Décris le résultat attendu, les contraintes et les critères de validation…" /></label>
+          <label>Priorité<select value={goalPriority} onChange={e=>setGoalPriority(Number(e.target.value))}>{[1,2,3,4,5].map(n=><option key={n} value={n}>{n} / 5</option>)}</select></label>
+          <button className="primary" disabled={busy || !goalTitle.trim() || !goalDescription.trim()} onClick={()=>void createObjective()}><Play size={15}/>{busy ? 'Planification…' : 'Créer et planifier'}</button>
+          <div className="tasktoolbar"><h3>Objectifs enregistrés ({objectives.length})</h3><button className="secondary" onClick={()=>void refreshObjectives()}>Actualiser</button></div>
+          {objectives.length ? objectives.map(goal=><article className="taskrow" key={goal.id}>
+            <div className="taskmeta"><b>#{goal.id} · {goal.title}</b><span className={`statuspill ${goal.status}`}>{goal.status}</span><small>Priorité {goal.priority}/5 · {goal.completed_steps || 0}/{goal.total_steps || 0} étapes</small></div>
+            <p>{goal.description}</p>
+            <div className="progress"><div style={{width:`${goal.total_steps ? (goal.completed_steps/goal.total_steps)*100 : 0}%`}} /></div>
+            <div className="tasktoolbar">
+              {goal.status==='active' && <button className="secondary" onClick={()=>void changeObjectiveStatus(goal.id,'paused')}>Mettre en pause</button>}
+              {goal.status==='paused' && <button className="secondary" onClick={()=>void changeObjectiveStatus(goal.id,'active')}>Reprendre</button>}
+              {(goal.status==='active'||goal.status==='paused') && <button className="dangericon" onClick={()=>void changeObjectiveStatus(goal.id,'cancelled')}>Annuler</button>}
+            </div>
+            {goal.steps?.map(step=><div className="runrow" key={step.id}><span className={`statuspill ${step.status}`}>{step.status}</span><div><b>{step.position}. {step.title}</b><small>{step.description}</small>{step.result && <small>Résultat : {step.result}</small>}{step.error && <small className="taskerror">{step.error}</small>}</div>{step.status==='failed' && <button className="secondary" onClick={()=>void retryObjectiveStep(goal.id,step.id)}>Relancer</button>}</div>)}
+          </article>) : <p className="empty">Aucun objectif défini.</p>}
         </section>}
 
         {page === 'heartbeat' && <section className="panel">
