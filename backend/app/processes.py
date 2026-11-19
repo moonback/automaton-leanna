@@ -176,15 +176,37 @@ def start(script_path, isolation="job_object"):
         reader = threading.Thread(target=drain_output, args=(process.stdout, log_path), daemon=True)
         reader.start()
 
-    with db.connect() as conn:
-        cur = conn.execute("""INSERT INTO managed_processes(
-            token,pid,script,status,log_path,isolation,exit_path,sandbox_config_path
-        ) VALUES(?,?,?,'running',?,?,?,?)""", (
-            token, process.pid, str(script.relative_to(WORKSPACE)), str(log_path),
-            isolation, str(exit_path) if exit_path else None,
-            str(config_path) if config_path else None
-        ))
-        process_id = cur.lastrowid
+    try:
+        with db.connect() as conn:
+            cur = conn.execute("""INSERT INTO managed_processes(
+                token,pid,script,status,log_path,isolation,exit_path,sandbox_config_path
+            ) VALUES(?,?,?,'running',?,?,?,?)""", (
+                token, process.pid, str(script.relative_to(WORKSPACE)), str(log_path),
+                isolation, str(exit_path) if exit_path else None,
+                str(config_path) if config_path else None
+            ))
+            process_id = cur.lastrowid
+    except Exception:
+        if job:
+            try:
+                windows_job.terminate_job(job)
+            finally:
+                windows_job.close_job(job)
+        else:
+            try:
+                process.terminate()
+                process.wait(timeout=3)
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+        if config_path:
+            try:
+                Path(config_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
     with _LOCK:
         _HANDLES[process_id] = process
         if reader:
