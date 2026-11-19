@@ -121,6 +121,7 @@ def start(script_path, isolation="job_object"):
     if isolation == "windows_sandbox" and os.name != "nt":
         raise ValueError("Windows Sandbox est disponible uniquement sous Windows.")
     if isolation == "windows_sandbox":
+        list_processes(limit=200)
         with db.connect() as conn:
             active = conn.execute(
                 "SELECT id FROM managed_processes WHERE isolation='windows_sandbox' AND status IN ('starting','running','stopping') LIMIT 1"
