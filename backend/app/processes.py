@@ -87,20 +87,16 @@ def _refresh(process_id):
                 if record and record.get("isolation") == "windows_sandbox":
                     exit_code = None
                     exit_path = record.get("exit_path")
-                    if exit_path and Path(exit_path).is_file():
+                    exit_file = Path(exit_path) if exit_path else None
+                    if exit_file and not exit_file.is_symlink() and exit_file.is_file():
                         try:
-                            exit_code = int(Path(exit_path).read_text(encoding="utf-8").strip())
+                            exit_code = int(exit_file.read_text(encoding="utf-8").strip())
                         except (OSError, ValueError):
                             exit_code = None
                     config_path = record.get("sandbox_config_path")
                     if config_path:
                         try:
                             Path(config_path).unlink(missing_ok=True)
-                        except OSError:
-                            pass
-                    for artifact in ("run.ps1", "runner.py", "exit-code.txt"):
-                        try:
-                            (Path(record["log_path"]).parent / artifact).unlink(missing_ok=True)
                         except OSError:
                             pass
                 with db.connect() as conn:
@@ -262,8 +258,11 @@ def read_log(process_id, max_bytes=12000):
     record = get_process(process_id)
     if record is None:
         return None
-    path = Path(record["log_path"]).resolve()
+    raw_path = Path(record["log_path"])
     root = LOG_DIR.resolve()
+    if raw_path.is_symlink():
+        return {"process": record, "log": ""}
+    path = raw_path.resolve()
     if root not in path.parents or not path.is_file():
         return {"process": record, "log": ""}
     with path.open("rb") as stream:
