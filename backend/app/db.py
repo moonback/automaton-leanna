@@ -35,6 +35,22 @@ def init():
                      started_at=NULL, finished_at=NULL,
                      error='Reprise après arrêt du backend.'
                      WHERE status='running'""")
+
+        c.execute("""CREATE TABLE IF NOT EXISTS objectives(
+            id INTEGER PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','completed','failed','cancelled')),
+            priority INTEGER NOT NULL DEFAULT 3 CHECK(priority BETWEEN 1 AND 5),
+            due_at TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS objective_steps(
+            id INTEGER PRIMARY KEY, objective_id INTEGER NOT NULL REFERENCES objectives(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','queued','running','succeeded','failed','skipped')),
+            task_id INTEGER REFERENCES tasks(id), result TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '', created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(objective_id, position))""")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_objective_steps_status ON objective_steps(objective_id,status,position)")
+
         c.execute("""CREATE TABLE IF NOT EXISTS heartbeat_runs(
             id INTEGER PRIMARY KEY, status TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
             error TEXT NOT NULL DEFAULT '', started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -137,4 +153,84 @@ def cancel_task(task_id):
     with connect() as c:
         cur = c.execute("""UPDATE tasks SET status='cancelled', updated_at=CURRENT_TIMESTAMP,
                            finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='queued'""", (task_id,))
+        return cur.rowcount > 0
+
+
+def create_objective(title, description, steps, priority=3, due_at=None):
+    with connect() as c:
+        cur = c.execute("INSERT INTO objectives(title,description,priority,due_at) VALUES(?,?,?,?)",
+                        (title, description, priority, due_at))
+        objective_id = cur.lastrowid
+        for position, step in enumerate(steps, 1):
+            c.execute("""INSERT INTO objective_steps(objective_id,position,title,description)
+                         VALUES(?,?,?,?)""", (objective_id, position, step["title"], step["description"]))
+        return get_objective(objective_id)
+
+def list_objectives(limit=50):
+    with connect() as c:
+        rows = c.execute("""SELECT o.*, COUNT(s.id) AS total_steps,
+            SUM(CASE WHEN s.status='succeeded' THEN 1 ELSE 0 END) AS completed_steps
+            FROM objectives o LEFT JOIN objective_steps s ON s.objective_id=o.id
+            GROUP BY o.id ORDER BY CASE o.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
+            o.priority DESC,o.id DESC LIMIT ?""", (max(1,min(limit,100)),)).fetchall()
+    return [dict(r) for r in rows]
+
+def get_objective(objective_id):
+    with connect() as c:
+        row=c.execute("SELECT * FROM objectives WHERE id=?",(objective_id,)).fetchone()
+        if row is None: return None
+        steps=c.execute("SELECT * FROM objective_steps WHERE objective_id=? ORDER BY position",(objective_id,)).fetchall()
+    result=dict(row); result["steps"]=[dict(s) for s in steps]
+    result["total_steps"]=len(steps)
+    result["completed_steps"]=sum(1 for s in steps if s["status"]=="succeeded")
+    return result
+
+def queue_objective_step(objective_id, step_id):
+    with connect() as c:
+        c.execute("BEGIN IMMEDIATE")
+        obj=c.execute("SELECT status FROM objectives WHERE id=?",(objective_id,)).fetchone()
+        step=c.execute("SELECT * FROM objective_steps WHERE id=? AND objective_id=?",(step_id,objective_id)).fetchone()
+        if not obj or obj["status"]!="active" or not step or step["status"] not in ("pending","failed"):
+            return False
+        cur=c.execute("INSERT INTO tasks(prompt,status) VALUES(?, 'queued')",
+                      (step["title"]+"\n\n"+step["description"],))
+        c.execute("""UPDATE objective_steps SET status='queued',task_id=?,error='',
+                     updated_at=CURRENT_TIMESTAMP WHERE id=?""",(cur.lastrowid,step_id))
+        c.execute("UPDATE objectives SET updated_at=CURRENT_TIMESTAMP WHERE id=?",(objective_id,))
+        return True
+
+def reconcile_objective_task(task_id, status, result="", error=""):
+    with connect() as c:
+        step=c.execute("SELECT id,objective_id FROM objective_steps WHERE task_id=?",(task_id,)).fetchone()
+        if not step: return
+        mapped={"running":"running","succeeded":"succeeded","failed":"failed","queued":"pending"}
+        step_status=mapped.get(status)
+        if not step_status: return
+        c.execute("""UPDATE objective_steps SET status=?,result=?,error=?,updated_at=CURRENT_TIMESTAMP
+                     WHERE id=?""",(step_status,result[:12000],error[:4000],step["id"]))
+        c.execute("UPDATE objectives SET updated_at=CURRENT_TIMESTAMP WHERE id=?",(step["objective_id"],))
+        remaining=c.execute("""SELECT COUNT(*) FROM objective_steps WHERE objective_id=?
+                               AND status NOT IN ('succeeded','skipped')""",(step["objective_id"],)).fetchone()[0]
+        failed=c.execute("SELECT COUNT(*) FROM objective_steps WHERE objective_id=? AND status='failed'",
+                         (step["objective_id"],)).fetchone()[0]
+        if remaining==0:
+            c.execute("UPDATE objectives SET status='completed',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                      (step["objective_id"],))
+        elif failed:
+            c.execute("UPDATE objectives SET status='active',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'",
+                      (step["objective_id"],))
+
+def set_objective_status(objective_id, status):
+    if status not in {"active","paused","cancelled"}: raise ValueError("Statut invalide")
+    with connect() as c:
+        cur=c.execute("UPDATE objectives SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN ('active','paused')",
+                      (status,objective_id))
+        return cur.rowcount > 0
+
+def retry_objective_step(objective_id, step_id):
+    with connect() as c:
+        cur=c.execute("""UPDATE objective_steps SET status='pending',task_id=NULL,error='',
+                         updated_at=CURRENT_TIMESTAMP WHERE id=? AND objective_id=? AND status='failed'""",
+                      (step_id,objective_id))
+        if cur.rowcount: c.execute("UPDATE objectives SET status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?",(objective_id,))
         return cur.rowcount > 0
