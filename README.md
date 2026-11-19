@@ -1,6 +1,6 @@
-# Automaton — Windows desktop starter
+# Automaton — Windows desktop agent
 
-Electron + React + TypeScript desktop UI, FastAPI/Python agent backend, SQLite memory and a local workspace.
+Electron + React + TypeScript desktop UI, FastAPI/Python backend, OpenRouter-compatible model API, SQLite persistence and a local workspace.
 
 ## Requirements
 - Windows 10/11
@@ -8,7 +8,7 @@ Electron + React + TypeScript desktop UI, FastAPI/Python agent backend, SQLite m
 - Python 3.11+
 - An OpenRouter API key (or another OpenAI-compatible provider key)
 
-## Backend setup
+## Install
 In PowerShell:
 ```powershell
 cd backend
@@ -17,32 +17,25 @@ py -3.11 -m venv .venv
 pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
-
-Edit `.env` and set `OPENROUTER_API_KEY`. The default model is `openai/gpt-4o-mini`; choose any model available to your OpenRouter account and supporting tool/function calling.
-
-Start the API:
+Set `OPENROUTER_API_KEY` in `backend/.env`, then start the API:
 ```powershell
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8765
 ```
-
-## Desktop UI
-From the repository root in a second PowerShell:
+In a second PowerShell at the repository root:
 ```powershell
 npm install
 npm run dev
 ```
 
-## Provider selection
-OpenRouter is the default:
-- `AI_PROVIDER=openrouter`
-- `OPENROUTER_API_KEY`
-- `OPENROUTER_MODEL`
-- Optional `OPENROUTER_SITE_URL` and `OPENROUTER_APP_NAME` for OpenRouter attribution.
+## Autonomous capabilities
+- **Heartbeat:** periodic background cycles. Disabled by default; configure with `PUT /heartbeat` (minimum interval 30 seconds). Status and run history: `GET /heartbeat`.
+- **Persistent memory:** SQLite memories survive restarts. Use `POST /memory`, `GET /memory?q=...`, and `DELETE /memory/{id}`. The agent can also recall and store memories with tools.
+- **Resource manager:** `GET /resources` reports workspace files, storage and runtime metadata. It does not terminate arbitrary processes or access files outside workspace.
+- **Self-improvement:** `POST /improvements/apply` accepts a unified diff only for `backend/app/`. It requires a clean Git working tree and `AUTO_IMPROVE_ENABLED=true`; syntax compilation is run and failed patches are reverted. Successful patches remain uncommitted for human review. Keep this disabled unless you understand the risks and have a backup.
+- **Multi-agent:** `POST /agents/run` runs planner, analyst and reviewer roles sequentially and returns each result. This is an initial orchestration layer, not parallel distributed execution.
 
-To use direct OpenAI, set `AI_PROVIDER=openai`, `OPENAI_API_KEY` and optionally `OPENAI_BASE_URL` / `OPENAI_MODEL`. The API key remains exclusively in the Python backend and is never sent to Electron's renderer.
+## Provider
+OpenRouter is the default: `AI_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`. Direct OpenAI is supported with `AI_PROVIDER=openai`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL`. Credentials stay in the backend and are never sent to Electron's renderer.
 
-## Agent permissions
-The current agent is restricted to `backend/workspace/`. It can list, read and write files there and run existing Python scripts with a 15-second timeout. It has no arbitrary shell or administrator access. Do not expose the local API publicly or store secrets in the workspace.
-
-## Repository hygiene
-Never commit `.env`, virtual environments, SQLite runtime databases, Python bytecode or build output. If a real provider key was ever committed, revoke/rotate it in the provider dashboard; deleting the file in a later commit does not erase it from Git history.
+## Safety
+The agent's file tools are restricted to `backend/workspace/`; Python script execution has a 15-second timeout. The local API must remain bound to localhost and must not be exposed publicly. Never put secrets in the workspace or commit `.env`, virtual environments, SQLite databases or Python bytecode. If a real API key was ever committed, revoke it: deleting it in a later commit does not remove it from Git history.

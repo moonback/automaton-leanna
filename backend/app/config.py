@@ -8,8 +8,6 @@ load_dotenv(ROOT / ".env")
 WORKSPACE = (ROOT / "workspace").resolve()
 DATA = ROOT / "data"
 
-# OpenRouter is the default provider. The same OpenAI-compatible client also
-# supports direct OpenAI and other compatible gateways.
 PROVIDER = os.getenv("AI_PROVIDER", "openrouter").strip().lower()
 if PROVIDER not in {"openrouter", "openai", "custom"}:
     raise ValueError("AI_PROVIDER must be openrouter, openai, or custom")
@@ -20,13 +18,12 @@ if PROVIDER == "openrouter":
     MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 else:
     API_KEY = os.getenv("OPENAI_API_KEY", "")
-    default_url = "https://api.openai.com/v1"
-    BASE_URL = os.getenv("OPENAI_BASE_URL", default_url).rstrip("/")
+    BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 MAX_STEPS = max(1, min(int(os.getenv("MAX_STEPS", "6")), 20))
 OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "")
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "Automaton")
-
+AUTO_IMPROVE_ENABLED = os.getenv("AUTO_IMPROVE_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 DATA.mkdir(parents=True, exist_ok=True)
