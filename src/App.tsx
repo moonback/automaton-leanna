@@ -89,7 +89,7 @@ export default function App() {
   }
   useEffect(() => {
     void refreshAll();
-    const id = window.setInterval(() => { void refreshBase(); void refreshTasks(); }, 3000);
+    const id = window.setInterval(() => { void refreshBase(); void refreshTasks().catch(() => {}); }, 3000);
     return () => window.clearInterval(id);
   }, []);
 
