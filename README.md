@@ -166,3 +166,30 @@ Le lancement échoue explicitement si Windows Sandbox n'est pas installé/activ�
 - Les tests automatisés valident la génération de configuration et les garde-fous ; ils ne remplacent pas un test réel sur une édition Windows compatible.
 
 Cette voie utilise Windows Sandbox plutôt qu'un AppContainer créé directement par Win32 : elle fournit une frontière VM prise en charge par Windows et permet de désactiver le réseau sans ajouter de dépendances natives tierces.
+
+
+## Gestionnaire de permissions, approbations et audit (1.4.0)
+
+Automaton applique désormais un contrôle de capacités avant l'exécution des outils de l'agent.
+
+### Profils de confiance
+- `observe_only` : lecture du workspace, consultation des processus et recherche mémoire.
+- `workspace_write` : ajoute l'écriture dans le workspace et la création de souvenirs.
+- `sandbox_execution` : ajoute le démarrage de processus gérés, soumis à approbation et exécutés via Windows Sandbox. Requiert une édition Windows compatible.
+- `admin` : toutes les capacités actuellement exposées, mais les actions sensibles restent soumises à approbation.
+
+Le profil initial est `observe_only`. Le changement de profil est explicite depuis l'interface **Permissions** ou `PUT /permissions/profile`. Le refus est appliqué si l'outil n'est pas autorisé par le profil.
+
+### Approbation humaine
+Les appels `start_process`, `stop_process` et `run_python` ne sont jamais exécutés directement par l'agent : une demande est créée, valable dix minutes. L'utilisateur peut l'approuver ou la refuser depuis la file d'approbation. L'exécution est à usage unique et le profil actif est revérifié au moment de l'exécution. `run_python` reste réservé au profil `admin` et demeure un sous-processus contraint, pas une frontière de sécurité OS.
+
+API : `GET /permissions`, `PUT /permissions/profile`, `GET /permissions/requests`, `POST /permissions/requests/{id}/decision`, `GET /permissions/audit`.
+
+### Journal d'audit et limites
+- Les décisions, changements de profil, demandes et résultats sont ajoutés à une table SQLite avec déclencheurs empêchant les modifications/suppressions via SQL ordinaire.
+- Les arguments sont résumés et les champs de type secret/token/mot de passe sont masqués ; le contenu de fichiers/patchs est remplacé par longueur et empreinte SHA-256 dans l'audit.
+- Les demandes d'approbation conservent les arguments nécessaires à leur exécution dans la base locale ; protégez donc le fichier SQLite et le répertoire de données.
+- Le backend local n'authentifie pas les clients locaux. Ce gestionnaire protège les appels d'outils de l'agent et ne constitue pas une frontière contre un autre processus malveillant exécuté sous le même compte Windows.
+- Les permissions et Windows Sandbox sont deux couches distinctes : les premières autorisent les capacités, la seconde isole certains processus.
+
+Tests ajoutés : `backend/tests/test_permissions.py` couvre le refus par défaut, les profils, l'approbation à usage unique, le refus humain et l'append-only du journal.
