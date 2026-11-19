@@ -12,6 +12,7 @@ CREATE_SUSPENDED = 0x00000004
 JOB_OBJECT_LIMIT_PROCESS_TIME = 0x00000002
 JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x00000008
 JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
+JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 JobObjectExtendedLimitInformation = 9
 ERROR_ACCESS_DENIED = 5
@@ -60,12 +61,14 @@ def create_job_for_suspended_process(process, memory_bytes=512 * 1024 * 1024,
         info.BasicLimitInformation.LimitFlags = (
             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
             JOB_OBJECT_LIMIT_PROCESS_MEMORY |
+            JOB_OBJECT_LIMIT_JOB_MEMORY |
             JOB_OBJECT_LIMIT_ACTIVE_PROCESS |
             JOB_OBJECT_LIMIT_PROCESS_TIME
         )
         info.BasicLimitInformation.ActiveProcessLimit = max_processes
         info.BasicLimitInformation.PerProcessUserTimeLimit = int(cpu_seconds * 10_000_000)
         info.ProcessMemoryLimit = memory_bytes
+        info.JobMemoryLimit = memory_bytes
         if not kernel32.SetInformationJobObject(
             job, JobObjectExtendedLimitInformation,
             ctypes.byref(info), ctypes.sizeof(info)
