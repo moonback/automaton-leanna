@@ -10,12 +10,14 @@ from pathlib import Path
 from . import db
 from .config import DATA, WORKSPACE
 from .sandbox import resolve_script, safe_environment, _limits, MAX_TIMEOUT
+from . import windows_job
 
 LOG_DIR = DATA / "process-logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 _LOCK = threading.RLock()
 _HANDLES = {}
 _LOG_THREADS = {}
+_JOB_HANDLES = {}
 MAX_LOG_BYTES = 2 * 1024 * 1024
 
 
@@ -32,6 +34,9 @@ def init():
     with _LOCK:
         _HANDLES.clear()
         _LOG_THREADS.clear()
+        for job in _JOB_HANDLES.values():
+            windows_job.close_job(job)
+        _JOB_HANDLES.clear()
     with db.connect() as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS managed_processes (
             id INTEGER PRIMARY KEY,
@@ -53,7 +58,12 @@ def init():
 def _record(process_id):
     with db.connect() as conn:
         row = conn.execute("SELECT * FROM managed_processes WHERE id=?", (process_id,)).fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    result = dict(row)
+    result["isolation_profile"] = "windows_job_object" if os.name == "nt" else "posix_resource_limits"
+    result["security_boundary"] = "resource_containment_only"
+    return result
 
 
 def _refresh(process_id):
@@ -68,6 +78,9 @@ def _refresh(process_id):
                         WHERE id=? AND status IN ('running','stopping')""", (code, process_id))
                 _HANDLES.pop(process_id, None)
                 _LOG_THREADS.pop(process_id, None)
+                job = _JOB_HANDLES.pop(process_id, None)
+                if job:
+                    windows_job.close_job(job)
     return _record(process_id)
 
 
@@ -79,11 +92,21 @@ def start(script_path):
     kwargs = {"cwd": str(WORKSPACE), "env": safe_environment(), "stdin": subprocess.DEVNULL,
               "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "shell": False}
     if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        kwargs["creationflags"] = windows_job.CREATE_SUSPENDED | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
         kwargs["preexec_fn"] = _limits(cpu_seconds=3600)
     process = subprocess.Popen(command, **kwargs)
+    job = None
+    if os.name == "nt":
+        try:
+            job = windows_job.create_job_for_suspended_process(
+                process, memory_bytes=512 * 1024 * 1024, cpu_seconds=3600, max_processes=32
+            )
+        except Exception:
+            process.kill()
+            process.wait()
+            raise
 
     def drain_output(pipe, destination):
         written = 0
@@ -111,6 +134,8 @@ def start(script_path):
     with _LOCK:
         _HANDLES[process_id] = process
         _LOG_THREADS[process_id] = reader
+        if job:
+            _JOB_HANDLES[process_id] = job
     return _refresh(process_id)
 
 
@@ -141,8 +166,7 @@ def stop(process_id):
                          (process_id,))
         try:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                               capture_output=True, timeout=5, check=False)
+                windows_job.terminate_job(_JOB_HANDLES.get(process_id))
             else:
                 os.killpg(process.pid, signal.SIGTERM)
             try:
