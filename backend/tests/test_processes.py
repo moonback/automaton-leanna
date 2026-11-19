@@ -50,6 +50,7 @@ class ManagedProcessTests(unittest.TestCase):
         self.assertEqual(current["status"], expected)
         self.assertIsNone(processes._HANDLES.get(record["id"]))
         if os.name == "nt":
+            process.wait(timeout=3)
             self.assertIsNotNone(process.poll())
         else:
             # POSIX fallback does not own a persistent OS job object.
