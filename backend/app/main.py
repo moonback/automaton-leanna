@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from . import db, tools, memory, resources, improvements, agents
+from . import db, tools, memory, resources, improvements, agents, objectives
 from .agent import run_agent
 from .heartbeat import worker
 from .tasks import worker as task_worker
@@ -12,14 +12,21 @@ from .config import PROVIDER, MODEL
 
 heartbeat_task = None
 task_worker_task = None
+objective_worker_task = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global heartbeat_task, task_worker_task
+    global heartbeat_task, task_worker_task, objective_worker_task
     db.init()
     heartbeat_task = asyncio.create_task(worker())
     task_worker_task = asyncio.create_task(task_worker())
+    objective_worker_task = asyncio.create_task(objectives.worker())
     yield
+    objective_worker_task.cancel()
+    try:
+        await objective_worker_task
+    except asyncio.CancelledError:
+        pass
     task_worker_task.cancel()
     try:
         await task_worker_task
@@ -31,7 +38,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
-app = FastAPI(title="Automaton Local API", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Automaton Local API", version="0.6.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -54,12 +61,18 @@ class ImprovementRequest(BaseModel):
 class TaskRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=12000)
 
+class ObjectiveRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=4000)
+    priority: int = Field(default=3, ge=1, le=5)
+    due_at: str | None = Field(default=None, max_length=40)
+
 class TeamRequest(BaseModel):
     task: str = Field(min_length=1, max_length=12000)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.5.0"}
+    return {"status": "ok", "version": "0.6.0"}
 
 @app.get("/config")
 def public_config():
@@ -150,3 +163,41 @@ def task_cancel(task_id: int):
             raise HTTPException(status_code=404, detail="Tâche introuvable")
         raise HTTPException(status_code=409, detail="Seules les tâches en attente peuvent être annulées")
     return {"cancelled": True, "id": task_id}
+
+
+@app.get("/objectives")
+def objective_list(limit: int = 50):
+    return {"objectives": db.list_objectives(limit)}
+
+@app.post("/objectives", status_code=201)
+async def objective_create(req: ObjectiveRequest):
+    try:
+        return await objectives.create_objective(req.title, req.description, req.priority, req.due_at)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+@app.get("/objectives/{objective_id}")
+def objective_detail(objective_id: int):
+    objective = db.get_objective(objective_id)
+    if objective is None:
+        raise HTTPException(status_code=404, detail="Objectif introuvable")
+    return objective
+
+@app.put("/objectives/{objective_id}/status")
+def objective_status(objective_id: int, status: str):
+    if status not in {"active", "paused", "cancelled"}:
+        raise HTTPException(status_code=400, detail="Statut attendu : active, paused ou cancelled")
+    if not db.set_objective_status(objective_id, status):
+        if db.get_objective(objective_id) is None:
+            raise HTTPException(status_code=404, detail="Objectif introuvable")
+        raise HTTPException(status_code=409, detail="Transition de statut impossible")
+    return db.get_objective(objective_id)
+
+@app.post("/objectives/{objective_id}/steps/{step_id}/retry")
+def objective_step_retry(objective_id: int, step_id: int):
+    if not db.retry_objective_step(objective_id, step_id):
+        objective = db.get_objective(objective_id)
+        if objective is None:
+            raise HTTPException(status_code=404, detail="Objectif introuvable")
+        raise HTTPException(status_code=409, detail="Seule une étape en échec peut être relancée")
+    return db.get_objective(objective_id)
