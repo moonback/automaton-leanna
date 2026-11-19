@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
-app = FastAPI(title="Automaton Local API", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="Automaton Local API", version="0.7.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -201,3 +201,19 @@ def objective_step_retry(objective_id: int, step_id: int):
             raise HTTPException(status_code=404, detail="Objectif introuvable")
         raise HTTPException(status_code=409, detail="Seule une étape en échec peut être relancée")
     return db.get_objective(objective_id)
+
+
+@app.get("/objectives/{objective_id}/history")
+def objective_history(objective_id: int):
+    if db.get_objective(objective_id) is None:
+        raise HTTPException(status_code=404, detail="Objectif introuvable")
+    return db.objective_history(objective_id)
+
+@app.post("/objectives/{objective_id}/supervise")
+async def objective_supervise(objective_id: int):
+    if db.get_objective(objective_id) is None:
+        raise HTTPException(status_code=404, detail="Objectif introuvable")
+    try:
+        return await objectives.supervise_objective(objective_id)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
