@@ -52,7 +52,7 @@ def save_plan(objective_id, steps):
 def save_appended_plan(objective_id, steps):
     ensure_schema()
     with db.connect() as conn:
-        rows = conn.execute("SELECT id,position FROM objective_steps WHERE objective_id=? ORDER BY position",
+        rows = conn.execute("SELECT id,position,title,description FROM objective_steps WHERE objective_id=? ORDER BY position",
                             (objective_id,)).fetchall()
         by_title = {(item["title"], item["description"]): item for item in steps}
         for row in rows:
