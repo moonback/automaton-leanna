@@ -95,7 +95,6 @@ def start(script_path):
 
 
 def list_processes(limit=50):
-    init()
     with db.connect() as conn:
         rows = conn.execute("SELECT id FROM managed_processes ORDER BY id DESC LIMIT ?",
                             (max(1, min(int(limit), 200)),)).fetchall()
@@ -103,12 +102,10 @@ def list_processes(limit=50):
 
 
 def get_process(process_id):
-    init()
     return _refresh(process_id)
 
 
 def stop(process_id):
-    init()
     with _LOCK:
         process = _HANDLES.get(process_id)
         record = _record(process_id)
