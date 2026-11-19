@@ -26,8 +26,9 @@ def normalize_checks(checks):
         if not isinstance(check, dict) or check.get("kind") not in ALLOWED:
             raise ValueError("Critère invalide : seuls exists, contains et python_syntax sont autorisés.")
         path = check.get("path")
-        if not isinstance(path, str) or not path.strip() or path.startswith(("/", "\\")):
-            raise ValueError("Chaque critère doit cibler un chemin relatif du workspace.")
+        parts = path.replace("\\", "/").split("/") if isinstance(path, str) else []
+        if not isinstance(path, str) or not path.strip() or path.startswith(("/", "\\")) or ":" in path or "\\x00" in path or ".." in parts:
+            raise ValueError("Chaque critère doit cibler un chemin relatif sûr du workspace.")
         item = {"kind": check["kind"], "path": path}
         if check["kind"] == "contains":
             text = check.get("text")
@@ -54,13 +55,15 @@ def save_appended_plan(objective_id, steps):
     with db.connect() as conn:
         rows = conn.execute("SELECT id,position,title,description FROM objective_steps WHERE objective_id=? ORDER BY position",
                             (objective_id,)).fetchall()
-        by_title = {(item["title"], item["description"]): item for item in steps}
+        unmatched = list(steps)
         for row in rows:
             existing = conn.execute("SELECT 1 FROM objective_step_verification WHERE step_id=?", (row["id"],)).fetchone()
             if existing:
                 continue
-            candidate = by_title.get((row["title"], row["description"]))
-            if candidate:
+            match = next((i for i, item in enumerate(unmatched)
+                          if item["title"] == row["title"] and item["description"] == row["description"]), None)
+            if match is not None:
+                candidate = unmatched.pop(match)
                 conn.execute("INSERT INTO objective_step_verification(step_id,checks_json) VALUES(?,?)",
                              (row["id"], json.dumps(candidate["checks"], ensure_ascii=False)))
 
