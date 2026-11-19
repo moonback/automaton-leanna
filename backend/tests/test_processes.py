@@ -57,6 +57,11 @@ class ManagedProcessTests(unittest.TestCase):
             process.terminate()
             process.wait(timeout=3)
 
+    @unittest.skipUnless(os.name != "nt", "Windows Sandbox is Windows-only")
+    def test_windows_sandbox_mode_is_rejected_on_non_windows(self):
+        with self.assertRaises(ValueError):
+            processes.start("worker.py", isolation="windows_sandbox")
+
 
 if __name__ == "__main__":
     unittest.main()
