@@ -43,6 +43,7 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [objectiveEvents, setObjectiveEvents] = useState<Record<number, {id:number;event_type:string;message:string;created_at:string}[]>>({});
+  const [objectiveRevisions, setObjectiveRevisions] = useState<Record<number, {id:number;revision:number;reason:string;plan_json:string;created_at:string}[]>>({});
   const [goalTitle, setGoalTitle] = useState('');
   const [goalDescription, setGoalDescription] = useState('');
   const [goalPriority, setGoalPriority] = useState(3);
@@ -140,7 +141,7 @@ export default function App() {
     catch(e) { setError(e instanceof Error ? e.message : 'Supervision impossible'); }
   }
   async function loadObjectiveHistory(id:number) {
-    try { const data=await request<{events:{id:number;event_type:string;message:string;created_at:string}[]}>(`/objectives/${id}/history`); setObjectiveEvents(current=>({...current,[id]:data.events})); }
+    try { const data=await request<{events:{id:number;event_type:string;message:string;created_at:string}[];revisions:{id:number;revision:number;reason:string;plan_json:string;created_at:string}[]}>(`/objectives/${id}/history`); setObjectiveEvents(current=>({...current,[id]:data.events})); setObjectiveRevisions(current=>({...current,[id]:data.revisions})); }
     catch(e) { setError(e instanceof Error ? e.message : 'Historique indisponible'); }
   }
   async function retryObjectiveStep(objectiveId:number,stepId:number) {
@@ -291,6 +292,8 @@ export default function App() {
               {goal.status==='paused' && <button className="secondary" onClick={()=>void changeObjectiveStatus(goal.id,'active')}>Reprendre</button>}
               {(goal.status==='active'||goal.status==='paused') && <button className="dangericon" onClick={()=>void changeObjectiveStatus(goal.id,'cancelled')}>Annuler</button>}
             </div>
+            {objectiveRevisions[goal.id]?.map(revision=><div className="revisionrow" key={revision.id}><b>Plan v{revision.revision} · {revision.reason}</b><small>{revision.created_at}</small><pre>{JSON.parse(revision.plan_json).map((step:{title:string;description:string},index:number)=>`${index+1}. ${step.title} — ${step.description}`).join('
+')}</pre></div>)}
             {objectiveEvents[goal.id]?.map(event=><div className="runrow" key={event.id}><span className="statuspill">{event.event_type}</span><div><b>{event.message}</b><small>{event.created_at}</small></div></div>)}
             {goal.steps?.map(step=><div className="runrow" key={step.id}><span className={`statuspill ${step.status}`}>{step.status}</span><div><b>{step.position}. {step.title}</b><small>{step.description}</small>{step.result && <small>Résultat : {step.result}</small>}{step.error && <small className="taskerror">{step.error}</small>}</div>{step.status==='failed' && <button className="secondary" onClick={()=>void retryObjectiveStep(goal.id,step.id)}>Relancer</button>}</div>)}
           </article>) : <p className="empty">Aucun objectif défini.</p>}
