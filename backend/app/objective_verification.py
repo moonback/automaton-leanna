@@ -80,7 +80,8 @@ def capture_baseline(step_id):
     with db.connect() as conn:
         row = conn.execute("SELECT checks_json FROM objective_step_verification WHERE step_id=?", (step_id,)).fetchone()
     if row is None:
-        raise ValueError("Critères d'acceptation absents pour cette étape.")
+        # Legacy steps are still allowed to run, but verify_task will fail them closed.
+        return {}
     root = WORKSPACE.resolve()
     baseline = {}
     for check in json.loads(row["checks_json"]):
