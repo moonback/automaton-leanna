@@ -193,7 +193,7 @@ def create_objective(title, description, steps, priority=3, due_at=None):
 def list_objectives(limit=50):
     with connect() as c:
         rows = c.execute("""SELECT o.*, COUNT(s.id) AS total_steps,
-            SUM(CASE WHEN s.status='succeeded' THEN 1 ELSE 0 END) AS completed_steps
+            SUM(CASE WHEN s.status IN ('succeeded','skipped') THEN 1 ELSE 0 END) AS completed_steps
             FROM objectives o LEFT JOIN objective_steps s ON s.objective_id=o.id
             GROUP BY o.id ORDER BY CASE o.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
             o.priority DESC,o.id DESC LIMIT ?""", (max(1,min(limit,100)),)).fetchall()
@@ -313,7 +313,7 @@ def record_supervision(objective_id, decision, note, new_steps=None):
         else:
             state="monitoring"
         if decision=="completed":
-            remaining=c.execute("SELECT COUNT(*) FROM objective_steps WHERE objective_id=? AND status!='succeeded'",
+            remaining=c.execute("SELECT COUNT(*) FROM objective_steps WHERE objective_id=? AND status NOT IN ('succeeded','skipped')",
                                 (objective_id,)).fetchone()[0]
             if remaining:
                 decision="blocked"; state="blocked"
