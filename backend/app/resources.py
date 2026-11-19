@@ -25,10 +25,12 @@ def _workspace_inventory():
 def snapshot(settings=None):
     """Read-only system telemetry; it never changes or terminates processes."""
     settings = settings or {"cpu_warning": 85.0, "memory_warning": 85.0, "disk_warning": 90.0}
-    disk = shutil.disk_usage(DATA)
+    # shutil accepts path-like objects, while psutil.disk_usage on Windows may
+    # pass the value to a native extension that requires a plain string.
+    disk = shutil.disk_usage(str(DATA))
     cpu_percent = psutil.cpu_percent(interval=0.12)
     memory = psutil.virtual_memory()
-    disk_percent = psutil.disk_usage(DATA).percent
+    disk_percent = (disk.used / disk.total * 100.0) if disk.total else 0.0
     try:
         net = psutil.net_io_counters()
         network = {"bytes_sent": net.bytes_sent, "bytes_received": net.bytes_recv,
