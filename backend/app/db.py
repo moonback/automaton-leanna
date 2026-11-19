@@ -1,16 +1,26 @@
 import json
 import sqlite3
+from contextlib import contextmanager
 from .config import DATA
 
 DB = DATA / "automaton.db"
 
+@contextmanager
 def connect():
+    # sqlite3's own context manager commits but never closes: leaked handles keep the file locked on Windows.
     c = sqlite3.connect(DB, timeout=10)
     c.row_factory = sqlite3.Row
-    return c
+    c.execute("PRAGMA foreign_keys=ON")  # per-connection; required for the ON DELETE CASCADE clauses
+    try:
+        with c:  # commit on success, rollback on exception
+            yield c
+    finally:
+        c.close()
 
 def init():
     with connect() as c:
+        # WAL is persistent: readers no longer block the three workers' writes.
+        c.execute("PRAGMA journal_mode=WAL")
         c.execute("""CREATE TABLE IF NOT EXISTS messages(
             id INTEGER PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP)""")
@@ -218,7 +228,7 @@ def get_objective(objective_id):
         steps=c.execute("SELECT * FROM objective_steps WHERE objective_id=? ORDER BY position",(objective_id,)).fetchall()
     result=dict(row); result["steps"]=[dict(s) for s in steps]
     result["total_steps"]=len(steps)
-    result["completed_steps"]=sum(1 for s in steps if s["status"]=="succeeded")
+    result["completed_steps"]=sum(1 for s in steps if s["status"] in ("succeeded","skipped"))
     return result
 
 def queue_objective_step(objective_id, step_id):
