@@ -99,10 +99,16 @@ def capture_baseline(step_id):
         row = conn.execute("SELECT checks_json FROM objective_step_verification WHERE step_id=?", (step_id,)).fetchone()
     if row is None:
         return {}
+    checks = json.loads(row["checks_json"])
     root = WORKSPACE.resolve()
-    baseline = {}
-    for check in json.loads(row["checks_json"]):
-        if check["kind"] not in WORKSPACE_KINDS:
+    files = {}
+    external = {}
+    external_checks = []
+    external_indices = []
+    for index, check in enumerate(checks):
+        if check["kind"] in EXTERNAL_KINDS:
+            external_checks.append(check)
+            external_indices.append(index)
             continue
         target = (root / check["path"]).resolve()
         if target == root or root not in target.parents:
@@ -110,7 +116,16 @@ def capture_baseline(step_id):
         digest = None
         if target.is_file() and target.stat().st_size <= workspace_verification.MAX_FILE_BYTES:
             digest = hashlib.sha256(target.read_bytes()).hexdigest()
-        baseline[check["path"]] = digest
+        files[check["path"]] = digest
+    if external_checks:
+        observed = external_verification.verify_external_checks(external_checks)["checks"]
+        for original_index, item in zip(external_indices, observed):
+            external[str(original_index)] = {
+                "passed": item["passed"],
+                "observed_status": item.get("observed_status"),
+                "observed_open": item.get("observed_open"),
+            }
+    baseline = {"files": files, "external": external}
     with db.connect() as conn:
         conn.execute("UPDATE objective_step_verification SET baseline_json=? WHERE step_id=?",
                      (json.dumps(baseline), step_id))
@@ -166,10 +181,19 @@ def verify_task(task_id, agent_result):
                      and item.get("tool") in {"write_file", "run_python"}]
         evidence = _run_checks(checks)
         baseline = json.loads(row["baseline_json"] or "{}")
+        baseline_files = baseline.get("files", baseline)
+        baseline_external = baseline.get("external", {})
         for item in evidence["checks"]:
-            if item.get("kind") not in WORKSPACE_KINDS:
+            index = item.get("index")
+            check_spec = checks[index] if isinstance(index, int) and index < len(checks) else {}
+            if item.get("kind") in EXTERNAL_KINDS:
+                if check_spec.get("must_transition"):
+                    before = baseline_external.get(str(index), {})
+                    if before.get("passed"):
+                        item["passed"] = False
+                        item["message"] += " Le service était déjà conforme avant l'action."
                 continue
-            before = baseline.get(item.get("path"))
+            before = baseline_files.get(item.get("path"))
             after = item.get("sha256")
             if before is not None and after == before:
                 item["passed"] = False
@@ -177,13 +201,19 @@ def verify_task(task_id, agent_result):
         evidence["passed"] = sum(1 for item in evidence["checks"] if item["passed"])
         evidence["failed"] = len(evidence["checks"]) - evidence["passed"]
         evidence["success"] = evidence["failed"] == 0
-        evidence["baseline_sha256"] = baseline
+        evidence["baseline"] = baseline
         evidence["tool_trace"] = trace
         evidence["agent_answer"] = str(agent_result.get("answer", ""))[:3000]
-        evidence["action_confirmed"] = bool(mutations)
-        if not mutations:
+        has_external = any(check["kind"] in EXTERNAL_KINDS for check in checks)
+        action_confirmed = any(item.get("success") and item.get("tool") == "run_python"
+                                for item in trace) if has_external else bool(mutations)
+        evidence["action_confirmed"] = action_confirmed
+        if not action_confirmed:
             evidence["success"] = False
-            evidence["error"] = "Aucune action de production confirmée (write_file ou run_python)."
+            evidence["error"] = (
+                "Aucune exécution Python confirmée pour produire l'effet externe."
+                if has_external else "Aucune action de production confirmée (write_file ou run_python)."
+            )
     with db.connect() as conn:
         conn.execute("""UPDATE objective_step_verification SET evidence_json=?, verified_at=CURRENT_TIMESTAMP
             WHERE step_id=?""", (json.dumps(evidence, ensure_ascii=False), row["id"]))
