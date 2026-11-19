@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from . import db, tools, memory, resources, improvements, agents, objectives, verification
+from . import db, tools, memory, resources, improvements, agents, objectives, verification, external_verification
 from .agent import run_agent
 from .heartbeat import worker
 from .tasks import worker as task_worker
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
-app = FastAPI(title="Automaton Local API", version="0.9.0", lifespan=lifespan)
+app = FastAPI(title="Automaton Local API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -72,7 +72,7 @@ class TeamRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.9.0"}
+    return {"status": "ok", "version": "1.0.0"}
 
 @app.get("/config")
 def public_config():
@@ -227,6 +227,21 @@ def workspace_verification(req: VerificationRequest):
     """Run explicit, read-only checks against workspace artifacts."""
     try:
         result = verification.verify_workspace(req.checks)
+        result["run_id"] = db.record_verification_run(req.checks, result)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class ExternalVerificationRequest(BaseModel):
+    checks: list[dict] = Field(min_length=1, max_length=10)
+
+
+@app.post("/verification/external")
+def external_effect_verification(req: ExternalVerificationRequest):
+    """Probe explicitly requested local HTTP endpoints and TCP ports."""
+    try:
+        result = external_verification.verify_external_checks(req.checks)
         result["run_id"] = db.record_verification_run(req.checks, result)
         return result
     except ValueError as exc:
