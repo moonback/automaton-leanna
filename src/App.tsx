@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
-  Activity, Bot, Brain, Cpu, Folder, Gauge, GitBranch, Play, RefreshCw,
+  Activity, Bot, Brain, Cpu, Folder, Gauge, GitBranch, ListTodo, Play, RefreshCw,
   Send, Settings, ShieldCheck, Trash2, Users, Zap
 } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8765';
 type Message = { role: 'user' | 'assistant'; content: string };
-type Page = 'agent' | 'heartbeat' | 'memory' | 'resources' | 'agents' | 'improvements';
+type Page = 'agent' | 'tasks' | 'heartbeat' | 'memory' | 'resources' | 'agents' | 'improvements';
 type Memory = { id: number; content: string; tags: string; importance: number; created_at: string };
 type HeartbeatRun = { id: number; status: string; summary: string; error: string; started_at: string };
 type HeartbeatConfig = { enabled: number; interval_seconds: number; prompt: string };
@@ -15,7 +15,7 @@ type ResourceSnapshot = {
   workspace: { file_count: number; total_bytes: number; files: { path: string; size: number }[] };
   storage: { total_bytes: number; free_bytes: number };
 };
-type AgentResult = { mode: string; agents: Record<string, string> };
+type AgentResult = { mode: string; agents: Record<string, string> };\ntype Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -36,7 +36,7 @@ function formatBytes(value: number) {
 export default function App() {
   const [page, setPage] = useState<Page>('agent');
   const [messages, setMessages] = useState<Message[]>([{ role: 'assistant', content: 'Automaton est prêt. Décris une tâche à accomplir dans son espace de travail.' }]);
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState('');\n  const [taskPrompt, setTaskPrompt] = useState('');\n  const [tasks, setTasks] = useState<Task[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Connexion…');
   const [workspace, setWorkspace] = useState<string[]>([]);
@@ -76,16 +76,16 @@ export default function App() {
     const data = await request<{ memories: Memory[] }>('/memory');
     setMemories(data.memories);
   }
-  async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
+  async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }\n  async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
   async function refreshAll() {
     setError('');
     await refreshBase();
-    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources()]); }
+    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks()]); }
     catch (e) { setError(e instanceof Error ? e.message : 'Erreur de chargement'); }
   }
   useEffect(() => {
     void refreshAll();
-    const id = window.setInterval(() => { void refreshBase(); }, 15000);
+    const id = window.setInterval(() => { void refreshBase(); void refreshTasks(); }, 3000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -102,7 +102,7 @@ export default function App() {
       setMessages(current => [...current, { role: 'assistant', content: `Erreur : ${e instanceof Error ? e.message : 'Erreur inconnue'}` }]);
     } finally { setBusy(false); }
   }
-  async function saveMemory() {
+  async function enqueueTask() {\n    const value = taskPrompt.trim();\n    if (!value) return;\n    setError(''); setNotice('');\n    try {\n      await request('/tasks', { method: 'POST', body: JSON.stringify({ prompt: value }) });\n      setTaskPrompt(''); await refreshTasks(); setNotice('Tâche ajoutée à la file.');\n    } catch (e) { setError(e instanceof Error ? e.message : 'Ajout impossible'); }\n  }\n  async function cancelTask(id: number) {\n    try { await request(`/tasks/${id}`, { method: 'DELETE' }); await refreshTasks(); }\n    catch (e) { setError(e instanceof Error ? e.message : 'Annulation impossible'); }\n  }\n  async function saveMemory() {
     if (!memoryText.trim()) return;
     setError(''); setNotice('');
     try {
@@ -147,7 +147,7 @@ export default function App() {
   }
 
   const nav: { id: Page; label: string; icon: typeof Bot }[] = [
-    { id: 'agent', label: 'Agent', icon: Bot },
+    { id: 'agent', label: 'Agent', icon: Bot },\n    { id: 'tasks', label: 'File de tâches', icon: ListTodo },
     { id: 'heartbeat', label: 'Heartbeat', icon: Activity },
     { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'resources', label: 'Ressources', icon: Gauge },
@@ -155,7 +155,7 @@ export default function App() {
     { id: 'improvements', label: 'Auto-amélioration', icon: GitBranch }
   ];
   const titles: Record<Page, string> = {
-    agent: 'Agent', heartbeat: 'Heartbeat', memory: 'Mémoire persistante',
+    agent: 'Agent', tasks: 'File de tâches persistantes', heartbeat: 'Heartbeat', memory: 'Mémoire persistante',
     resources: 'Gestionnaire de ressources', agents: 'Équipe multi-agents',
     improvements: 'Auto-amélioration'
   };
@@ -201,7 +201,21 @@ export default function App() {
           </section>
         </>}
 
-        {page === 'heartbeat' && <section className="panel">
+
+        {page === 'tasks' && <section className="panel">
+          <div className="panelintro"><ListTodo /><div><h2>File de tâches persistantes</h2><p>Les tâches sont enregistrées dans SQLite, exécutées une par une et remises en attente après un redémarrage du backend si elles étaient en cours.</p></div></div>
+          <label>Nouvelle tâche<textarea rows={4} value={taskPrompt} onChange={e => setTaskPrompt(e.target.value)} placeholder="Décris une tâche à exécuter par Automaton…" /></label>
+          <button className="primary" disabled={!taskPrompt.trim()} onClick={() => void enqueueTask()}><Play size={15} /> Ajouter à la file</button>
+          <div className="tasktoolbar"><h3>Tâches ({tasks.length})</h3><button className="secondary" onClick={() => void refreshTasks()}>Actualiser</button></div>
+          {tasks.length ? tasks.map(task => <article className="taskrow" key={task.id}>
+            <div className="taskmeta"><b>#{task.id}</b><span className={`statuspill ${task.status}`}>{task.status}</span><small>{task.created_at}</small></div>
+            <p>{task.prompt}</p>
+            {task.result && <div className="taskoutput">{task.result}</div>}
+            {task.error && <div className="taskerror">{task.error}</div>}
+            {task.status === 'queued' && <button className="dangericon" onClick={() => void cancelTask(task.id)} title="Annuler la tâche"><Trash2 size={16} /></button>}
+          </article>) : <p className="empty">La file est vide.</p>}
+        </section>}
+\n        {page === 'heartbeat' && <section className="panel">
           <div className="panelintro"><Activity /><div><h2>Cycles autonomes</h2><p>Le heartbeat lance périodiquement une tâche de contrôle dans le workspace.</p></div></div>
           {heartbeat && <>
             <label className="toggleline"><span><b>Activer le heartbeat</b><small>Désactivé par défaut au premier démarrage.</small></span><input type="checkbox" checked={!!heartbeat.enabled} onChange={e => setHeartbeat({ ...heartbeat, enabled: e.target.checked ? 1 : 0 })} /></label>
