@@ -98,7 +98,7 @@ async def supervise_objective(objective_id: int):
     note=str(payload.get("note","")).strip()[:2000] or "Aucune observation fournie."
     new_steps=_normalize_steps(payload.get("new_steps",[]),0,4)
     has_failure=any(step["status"]=="failed" for step in objective["steps"])
-    all_succeeded=bool(objective["steps"]) and all(step["status"]=="succeeded" for step in objective["steps"])
+    all_succeeded=bool(objective["steps"]) and all(step["status"] in ("succeeded","skipped") for step in objective["steps"])
     if has_failure and decision=="continue":
         decision="blocked"
         note += " Une étape en échec exige une correction explicite."
