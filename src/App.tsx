@@ -18,7 +18,7 @@ type ResourceSnapshot = {
 };
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
-type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
+type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string };\ntype Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -59,7 +59,7 @@ export default function App() {
   const [importance, setImportance] = useState(3);
   const [heartbeat, setHeartbeat] = useState<HeartbeatConfig | null>(null);
   const [heartbeatRuns, setHeartbeatRuns] = useState<HeartbeatRun[]>([]);
-  const [resources, setResources] = useState<ResourceSnapshot | null>(null);
+  const [resources, setResources] = useState<ResourceSnapshot | null>(null);\n  const [managedProcesses, setManagedProcesses] = useState<ManagedProcess[]>([]);\n  const [processScript, setProcessScript] = useState('');\n  const [processLogs, setProcessLogs] = useState<Record<number,string>>({});
   const [teamTask, setTeamTask] = useState('');
   const [teamResult, setTeamResult] = useState<AgentResult | null>(null);
   const [patch, setPatch] = useState('');
@@ -87,18 +87,18 @@ export default function App() {
     const data = await request<{ memories: Memory[] }>('/memory');
     setMemories(data.memories);
   }
-  async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
+  async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }\n  async function refreshProcesses() { const data=await request<{processes:ManagedProcess[]}>('/processes'); setManagedProcesses(data.processes); }\n  async function startManagedProcess() { if(!processScript.trim()) return; try { await request('/processes',{method:'POST',body:JSON.stringify({path:processScript.trim()})}); setProcessScript(''); await refreshProcesses(); setNotice('Processus démarré.'); } catch(e) { setError(e instanceof Error?e.message:'Démarrage impossible'); } }\n  async function stopManagedProcess(id:number) { try { await request('/processes/'+id,{method:'DELETE'}); await refreshProcesses(); } catch(e) { setError(e instanceof Error?e.message:'Arrêt impossible'); } }\n  async function loadProcessLog(id:number) { try { const data=await request<{log:string}>('/processes/'+id+'/logs'); setProcessLogs(current=>({...current,[id]:data.log})); } catch(e) { setError(e instanceof Error?e.message:'Logs indisponibles'); } }
   async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
   async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); const details = await Promise.all(data.objectives.map(item => request<Objective>(`/objectives/${item.id}`))); setObjectives(details); }
   async function refreshAll() {
     setError('');
     await refreshBase();
-    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks(), refreshObjectives()]); }
+    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshProcesses(), refreshTasks(), refreshObjectives()]); }
     catch (e) { setError(e instanceof Error ? e.message : 'Erreur de chargement'); }
   }
   useEffect(() => {
     void refreshAll();
-    const id = window.setInterval(() => { void refreshBase(); void refreshResources().catch(() => {}); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); }, 3000);
+    const id = window.setInterval(() => { void refreshBase(); void refreshResources().catch(() => {}); void refreshProcesses().catch(() => {}); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); }, 3000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -367,13 +367,21 @@ export default function App() {
           <div className="panelintro"><Gauge /><div><h2>État de la machine</h2><p>Informations d’exécution et inventaire limité au workspace.</p></div></div>
           {resources && <>
             <div className="resourcegrid">
-              <div className="resourcecard"><small>FICHIERS</small><b>{resources.workspace.file_count}</b><span>{formatBytes(resources.workspace.total_bytes)} dans le workspace</span></div>
-              <div className="resourcecard"><small>ESPACE LIBRE</small><b>{formatBytes(resources.storage.free_bytes)}</b><span>sur {formatBytes(resources.storage.total_bytes)}</span></div>
+              <div className="resourcecard"><small>CPU</small><b>{resources.system.cpu_percent.toFixed(1)}%</b><span>Charge processeur</span></div>
+              <div className="resourcecard"><small>RAM</small><b>{resources.system.memory_percent.toFixed(1)}%</b><span>{formatBytes(resources.system.memory_used_bytes)} / {formatBytes(resources.system.memory_total_bytes)}</span></div>
+              <div className="resourcecard"><small>DISQUE UTILISÉ</small><b>{resources.system.disk_percent.toFixed(1)}%</b><span>{formatBytes(resources.storage.free_bytes)} libres</span></div>
+              <div className="resourcecard"><small>RÉSEAU REÇU</small><b>{formatBytes(resources.system.network_received_bytes)}</b><span>Depuis le démarrage</span></div>
+              <div className="resourcecard"><small>RÉSEAU ENVOYÉ</small><b>{formatBytes(resources.system.network_sent_bytes)}</b><span>Depuis le démarrage</span></div>
               <div className="resourcecard"><small>PROCESSUS API</small><b>{resources.pid}</b><span>Python {resources.python}</span></div>
             </div>
-            <p className="subtle">{resources.platform}</p><h3>Fichiers du workspace</h3>
+            <p className="subtle">{resources.platform} · GPU : {resources.system.gpu_available ? 'disponible' : 'télémétrie non configurée'}</p>
+            <h3>Processus gérés par Automaton</h3>
+            <div className="process-launch"><input value={processScript} onChange={e=>setProcessScript(e.target.value)} placeholder="Chemin d’un script Python du workspace" /><button className="primary" disabled={!processScript.trim()} onClick={()=>void startManagedProcess()}><Play size={14}/> Démarrer</button></div>
+            {managedProcesses.map(proc=><article className="managed-process" key={proc.id}><div className="managed-process-head"><div><b>{proc.script}</b><small>PID {proc.pid} · {proc.status}{proc.exit_code!==null ? ' · code '+proc.exit_code : ''}</small></div><div className="process-buttons"><button className="secondary" onClick={()=>void loadProcessLog(proc.id)}>Logs</button>{['running','starting','stopping'].includes(proc.status) && <button className="secondary stop-process" onClick={()=>void stopManagedProcess(proc.id)}>Arrêter</button>}</div></div>{processLogs[proc.id]!==undefined && <pre className="process-log">{processLogs[proc.id] || 'Aucune sortie pour le moment.'}</pre>}</article>)}
+            {!managedProcesses.length && <p className="subtle">Aucun processus géré pour le moment.</p>}
+            <h3>Fichiers du workspace</h3>
             {resources.workspace.files.map(file => <div className="file" key={file.path}><span>{file.path}</span><small>{formatBytes(file.size)}</small></div>)}
-            <p className="securitynote"><ShieldCheck size={15} /> Aucun contrôle arbitraire des processus ; inventaire limité au workspace.</p>
+            <p className="securitynote"><ShieldCheck size={15} /> Seuls les scripts autorisés du workspace peuvent être démarrés. Les processus orphelins après redémarrage ne sont pas arrêtables depuis l’application.</p>
           </>}
           <button className="secondary" onClick={() => void refreshResources()}>Actualiser les ressources</button>
         </section>}
