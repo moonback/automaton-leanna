@@ -28,7 +28,7 @@ npm run dev
 ```
 
 ## Desktop modules
-The Electron interface provides dedicated screens for Agent, Heartbeat, Memory, Resources, Multi-agents and Self-improvement. It polls the local API for connection status and displays module state.
+The Electron interface provides dedicated screens for Agent, persistent Tasks, Objectives, Heartbeat, Memory, Resources, Multi-agents and Self-improvement. It polls the local API for connection status and displays module state.
 
 ## File de tâches persistantes et objectifs autonomes
 - **Queue SQLite:** les tâches sont ajoutées avec `POST /tasks`, consultables avec `GET /tasks` et `GET /tasks/{id}`. Un worker local les exécute une par une ; `DELETE /tasks/{id}` annule uniquement une tâche encore en attente. Les tâches en cours sont remises en file au prochain démarrage du backend.
@@ -36,6 +36,14 @@ The Electron interface provides dedicated screens for Agent, Heartbeat, Memory, 
 ## Objectifs autonomes
 - **Gestionnaire d'objectifs:** crée un objectif via `POST /objectives` avec un titre, une description et une priorité. Le planificateur IA génère 2 à 12 étapes persistées dans SQLite. `GET /objectives` et `GET /objectives/{id}` exposent la progression. Les étapes sont ajoutées séquentiellement à la file de tâches ; chaque étape attend la réussite de la précédente. Pause/reprise/annulation : `PUT /objectives/{id}/status?status=paused|active|cancelled`. Une étape en échec peut être relancée avec `POST /objectives/{id}/steps/{step_id}/retry`. Les étapes et objectifs sont conservés après redémarrage.
 - Le planificateur ne garantit pas que le résultat final est correct : les critères de réussite doivent être vérifiés. L'exécution des étapes utilise les outils de l'agent et les mêmes limites du workspace.
+
+### Supervision autonome des objectifs
+- Un worker local examine les objectifs actifs toutes les 60 secondes lorsqu'aucune étape n'est en cours. La supervision peut être déclenchée manuellement avec `POST /objectives/{id}/supervise`.
+- L'évaluateur examine les résultats et erreurs d'étapes, puis choisit de continuer, de clôturer après validation, de proposer un plan correctif ou de signaler un blocage.
+- Les adaptations ajoutent des étapes au plan sans écraser les anciennes versions. Les étapes en échec conservées dans l'historique sont marquées comme ignorées uniquement lorsqu'un plan correctif est accepté.
+- `GET /objectives/{id}/history` expose les événements et révisions du plan. Le bouton Historique de l'interface affiche les événements.
+- Une erreur fournisseur est journalisée et retentée après le délai de supervision. Un objectif bloqué nécessite une action explicite : examen humain, relance d'étape ou reprise.
+- Limite : l'évaluation repose sur le modèle configuré et les preuves présentes dans les résultats. Elle ne constitue pas une preuve formelle de réussite. Le superviseur ne modifie pas le code de lui-même.
 
 ## Autonomous capabilities
 - **Heartbeat:** periodic background cycles. Disabled by default; configure interval and prompt in the desktop UI or use `PUT /heartbeat` (minimum interval 30 seconds). Status and run history: `GET /heartbeat`.
