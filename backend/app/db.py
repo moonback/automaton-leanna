@@ -376,3 +376,30 @@ def list_verification_runs(limit=20):
                        (max(1,min(limit,100)),)).fetchall()
     return [{"id":row["id"],"checks":json.loads(row["checks_json"]),
              "result":json.loads(row["result_json"]),"created_at":row["created_at"]} for row in rows]
+
+
+def _ensure_resource_settings():
+    with connect() as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS resource_settings(
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            cpu_warning REAL NOT NULL DEFAULT 85,
+            memory_warning REAL NOT NULL DEFAULT 85,
+            disk_warning REAL NOT NULL DEFAULT 90,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)""")
+        c.execute("INSERT OR IGNORE INTO resource_settings(id) VALUES(1)")
+
+
+def get_resource_settings():
+    _ensure_resource_settings()
+    with connect() as c:
+        row = c.execute("SELECT cpu_warning,memory_warning,disk_warning FROM resource_settings WHERE id=1").fetchone()
+    return dict(row)
+
+
+def set_resource_settings(cpu_warning, memory_warning, disk_warning):
+    _ensure_resource_settings()
+    with connect() as c:
+        c.execute("""UPDATE resource_settings SET cpu_warning=?,memory_warning=?,disk_warning=?,
+                     updated_at=CURRENT_TIMESTAMP WHERE id=1""",
+                  (cpu_warning, memory_warning, disk_warning))
+    return get_resource_settings()
