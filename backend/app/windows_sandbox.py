@@ -36,18 +36,17 @@ def _sandbox_executable():
 
 
 def _python_runtime():
-    executable = Path(sys.executable).resolve()
-    prefix = Path(sys.prefix).resolve()
-    try:
-        relative = executable.relative_to(prefix)
-    except ValueError as exc:
-        raise ValueError(
-            "L'interpréteur Python doit être installé sous sys.prefix pour être monté "
-            "en lecture seule dans Windows Sandbox."
-        ) from exc
-    if not executable.is_file() or not (prefix / "Lib").is_dir():
-        raise ValueError("Installation Python non portable/non standard : runtime Sandbox refusé.")
-    return prefix, relative
+    # Use the base interpreter inside the guest. A venv's pyvenv.cfg contains
+    # host-absolute paths, so mount its site-packages separately instead.
+    base = Path(sys.base_prefix).resolve()
+    executable = base / "python.exe"
+    if not executable.is_file() or not (base / "Lib").is_dir():
+        raise ValueError("Runtime Python de base introuvable : Windows Sandbox refusé.")
+    venv = Path(sys.prefix).resolve() if Path(sys.prefix).resolve() != base else None
+    site_packages = venv / "Lib" / "site-packages" if venv else None
+    if site_packages and not site_packages.is_dir():
+        site_packages = None
+    return base, executable.name, venv, site_packages
 
 
 def _write_config(config_path, workspace, runtime, output):
@@ -61,6 +60,7 @@ def _write_config(config_path, workspace, runtime, output):
     for host, guest, readonly in (
         (workspace, SANDBOX_WORKSPACE, True),
         (runtime, SANDBOX_PYTHON, True),
+        *(([(venv, r"C:\\AutomatonVenv", True)] if venv else [])),
         (output, SANDBOX_OUTPUT, False),
     ):
         entry = ET.SubElement(folders, "MappedFolder")
@@ -78,7 +78,7 @@ def _write_config(config_path, workspace, runtime, output):
 def start(script, output_dir, log_path):
     """Launch a dedicated Windows Sandbox instance; return its host process."""
     executable = _sandbox_executable()
-    runtime, python_relative = _python_runtime()
+    runtime, python_name, venv, site_packages = _python_runtime()
     script = Path(script).resolve()
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
