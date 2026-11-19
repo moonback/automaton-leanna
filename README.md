@@ -175,7 +175,7 @@ Automaton applique désormais un contrôle de capacités avant l'exécution des 
 ### Profils de confiance
 - `observe_only` : lecture du workspace, consultation des processus et recherche mémoire.
 - `workspace_write` : ajoute l'écriture dans le workspace et la création de souvenirs.
-- `sandbox_execution` : ajoute le démarrage de processus gérés, soumis à approbation et exécutés via Windows Sandbox. Requiert une édition Windows compatible.
+- `sandbox_execution` : ajoute le démarrage et l'arrêt de processus gérés, soumis à approbation ; les démarrages utilisent Windows Sandbox. Requiert une édition Windows compatible.
 - `admin` : toutes les capacités actuellement exposées, mais les actions sensibles restent soumises à approbation.
 
 Le profil initial est `observe_only`. Le changement de profil est explicite depuis l'interface **Permissions** ou `PUT /permissions/profile`. Le refus est appliqué si l'outil n'est pas autorisé par le profil.
