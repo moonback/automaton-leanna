@@ -5,7 +5,7 @@ from .config import (
     API_KEY, BASE_URL, MODEL, MAX_STEPS, PROVIDER,
     OPENROUTER_SITE_URL, OPENROUTER_APP_NAME,
 )
-from . import db, tools, memory, processes
+from . import db, tools, memory, processes, permissions
 
 SYSTEM = (
     "Tu es Automaton, un agent local. Accomplis la tâche en plusieurs étapes. "
@@ -31,12 +31,16 @@ CALLS = {
     "read_file": lambda a: tools.read_file(**a),
     "write_file": lambda a: tools.write_file(**a),
     "run_python": lambda a: tools.run_python(**a),
-    "start_process": lambda a: processes.start(a["path"]),
+    "start_process": lambda a: processes.start(a["path"], isolation="windows_sandbox" if permissions.get_config()["profile"] == "sandbox_execution" else "job_object"),
     "list_processes": lambda a: processes.list_processes(),
     "stop_process": lambda a: processes.stop(a["process_id"]),
     "recall_memories": lambda a: memory.recall(a.get("query", ""), 10),
     "remember": lambda a: memory.remember(a["content"], a.get("tags", ""), a.get("importance", 3)),
 }
+
+
+def execute_tool(name, arguments):
+    return CALLS[name](arguments)
 
 
 def provider_headers():
@@ -86,10 +90,10 @@ async def run_agent(prompt: str):
                     args = json.loads(call["function"].get("arguments") or "{}")
                     if name not in CALLS:
                         raise ValueError(f"Outil inconnu : {name}")
-                    result = CALLS[name](args)
+                    result = permissions.dispatch(name, args, execute_tool)
                     content = json.dumps(result, ensure_ascii=False)
-                    action_ok = not (name == "run_python" and isinstance(result, dict) and result.get("returncode") != 0)
-                    tool_trace.append({"tool":name,"arguments":args,"result":result,"success":action_ok})
+                    action_ok = not (isinstance(result, dict) and (result.get("status") == "approval_required" or result.get("error"))) and not (name == "run_python" and isinstance(result, dict) and result.get("returncode") != 0)
+                    tool_trace.append({"tool":name,"arguments_summary":permissions._summary(args),"result":result,"success":action_ok})
                 except Exception as exc:
                     content = json.dumps({"error":str(exc)}, ensure_ascii=False)
                     tool_trace.append({"tool":call.get("function",{}).get("name","unknown"),"success":False,"error":str(exc)})
