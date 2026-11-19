@@ -32,6 +32,7 @@ CALLS = {
     "remember": lambda a: memory.remember(a["content"], a.get("tags", ""), a.get("importance", 3)),
 }
 
+
 def provider_headers():
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     if PROVIDER == "openrouter":
@@ -39,6 +40,7 @@ def provider_headers():
         if OPENROUTER_SITE_URL:
             headers["HTTP-Referer"] = OPENROUTER_SITE_URL
     return headers
+
 
 async def run_agent(prompt: str):
     if not API_KEY or API_KEY in {"replace_me", "your_openrouter_api_key"}:
@@ -49,13 +51,14 @@ async def run_agent(prompt: str):
         )
 
     remembered = db.search_memories("", 5)
-    memory_context = "\n".join(
+    memory_context = "\\n".join(
         f"- [importance {item['importance']}] {item['content']} (tags: {item['tags']})"
         for item in remembered
     ) or "Aucun souvenir enregistré."
-    system = SYSTEM + "\n\nSouvenirs persistants disponibles :\n" + memory_context
+    system = SYSTEM + "\\n\\nSouvenirs persistants disponibles :\\n" + memory_context
     messages = [{"role":"system","content":system}] + db.history(16) + [{"role":"user","content":prompt}]
     db.save("user", prompt)
+    tool_trace = []
 
     async with httpx.AsyncClient(timeout=90) as client:
         for step in range(MAX_STEPS):
@@ -69,7 +72,7 @@ async def run_agent(prompt: str):
             if not message.get("tool_calls"):
                 answer = message.get("content") or "Tâche terminée."
                 db.save("assistant", answer)
-                return {"answer":answer,"steps":step+1,"provider":PROVIDER,"model":MODEL}
+                return {"answer":answer,"steps":step+1,"provider":PROVIDER,"model":MODEL,"tool_trace":tool_trace}
             messages.append(message)
             for call in message["tool_calls"]:
                 try:
@@ -79,10 +82,12 @@ async def run_agent(prompt: str):
                         raise ValueError(f"Outil inconnu : {name}")
                     result = CALLS[name](args)
                     content = json.dumps(result, ensure_ascii=False)
+                    tool_trace.append({"tool":name,"arguments":args,"result":result,"success":True})
                 except Exception as exc:
                     content = json.dumps({"error":str(exc)}, ensure_ascii=False)
+                    tool_trace.append({"tool":call.get("function",{}).get("name","unknown"),"success":False,"error":str(exc)})
                 messages.append({"role":"tool","tool_call_id":call["id"],"content":content})
 
     answer = "Limite d'itérations atteinte. Relance avec une instruction complémentaire."
     db.save("assistant", answer)
-    return {"answer":answer,"steps":MAX_STEPS,"provider":PROVIDER,"model":MODEL}
+    return {"answer":answer,"steps":MAX_STEPS,"provider":PROVIDER,"model":MODEL,"tool_trace":tool_trace}
