@@ -80,8 +80,8 @@ The agent's file tools are restricted to `backend/workspace/`; Python script exe
 
 ## Vérification des effets externes locaux (1.0.0)
 Les étapes d'objectif peuvent désormais vérifier des services locaux après une action :
-- `http_status` : effectue un GET HTTP sans suivre les redirections et compare le code observé au code attendu.
-- `tcp_port_open` : vérifie qu'un port TCP local accepte une connexion.
+- `http_status` : effectue un GET HTTP sans suivre les redirections et compare le code observé au code attendu. `must_transition: true` exige que le service ne soit pas déjà conforme avant l'action.
+- `tcp_port_open` : vérifie qu'un port TCP local accepte une connexion. `must_transition: true` exige que le port soit fermé avant l'action puis ouvert après.
 - Les sondes sont strictement limitées à `localhost`, `127.0.0.1` et `::1`. Aucun hôte du réseau local ou d'Internet n'est accepté, afin de limiter les risques SSRF.
 - Les requêtes HTTP utilisent un délai court, désactivent les proxys d'environnement et n'envoient aucune donnée d'authentification.
 - Les preuves externes sont regroupées avec les contrôles workspace dans l'événement de vérification de l'étape.
