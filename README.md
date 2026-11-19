@@ -30,8 +30,12 @@ npm run dev
 ## Desktop modules
 The Electron interface provides dedicated screens for Agent, Heartbeat, Memory, Resources, Multi-agents and Self-improvement. It polls the local API for connection status and displays module state.
 
-## File de tâches persistantes
+## File de tâches persistantes et objectifs autonomes
 - **Queue SQLite:** les tâches sont ajoutées avec `POST /tasks`, consultables avec `GET /tasks` et `GET /tasks/{id}`. Un worker local les exécute une par une ; `DELETE /tasks/{id}` annule uniquement une tâche encore en attente. Les tâches en cours sont remises en file au prochain démarrage du backend.
+
+## Objectifs autonomes
+- **Gestionnaire d'objectifs:** crée un objectif via `POST /objectives` avec un titre, une description et une priorité. Le planificateur IA génère 2 à 12 étapes persistées dans SQLite. `GET /objectives` et `GET /objectives/{id}` exposent la progression. Les étapes sont ajoutées séquentiellement à la file de tâches ; chaque étape attend la réussite de la précédente. Pause/reprise/annulation : `PUT /objectives/{id}/status?status=paused|active|cancelled`. Une étape en échec peut être relancée avec `POST /objectives/{id}/steps/{step_id}/retry`. Les étapes et objectifs sont conservés après redémarrage.
+- Le planificateur ne garantit pas que le résultat final est correct : les critères de réussite doivent être vérifiés. L'exécution des étapes utilise les outils de l'agent et les mêmes limites du workspace.
 
 ## Autonomous capabilities
 - **Heartbeat:** periodic background cycles. Disabled by default; configure interval and prompt in the desktop UI or use `PUT /heartbeat` (minimum interval 30 seconds). Status and run history: `GET /heartbeat`.
