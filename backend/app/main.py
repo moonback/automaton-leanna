@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from . import db, tools, memory, resources, improvements, agents, objectives, verification
+from . import db, tools, memory, resources, improvements, agents, objectives, verification, external_verification, processes
 from .agent import run_agent
 from .heartbeat import worker
 from .tasks import worker as task_worker
@@ -18,6 +18,7 @@ objective_worker_task = None
 async def lifespan(app: FastAPI):
     global heartbeat_task, task_worker_task, objective_worker_task
     db.init()
+    processes.init()
     heartbeat_task = asyncio.create_task(worker())
     task_worker_task = asyncio.create_task(task_worker())
     objective_worker_task = asyncio.create_task(objectives.worker())
@@ -38,7 +39,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
-app = FastAPI(title="Automaton Local API", version="0.9.0", lifespan=lifespan)
+app = FastAPI(title="Automaton Local API", version="1.1.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -67,12 +68,15 @@ class ObjectiveRequest(BaseModel):
     priority: int = Field(default=3, ge=1, le=5)
     due_at: str | None = Field(default=None, max_length=40)
 
+class ProcessStartRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=500)
+
 class TeamRequest(BaseModel):
     task: str = Field(min_length=1, max_length=12000)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.9.0"}
+    return {"status": "ok", "version": "1.1.0"}
 
 @app.get("/config")
 def public_config():
@@ -118,6 +122,45 @@ def heartbeat_status():
 @app.put("/heartbeat")
 def heartbeat_update(req: HeartbeatRequest):
     return {"config": db.set_heartbeat(req.enabled, req.interval_seconds, req.prompt)}
+
+
+@app.get("/processes")
+def process_list(limit: int = 50):
+    return {"processes": processes.list_processes(limit)}
+
+
+@app.post("/processes", status_code=201)
+def process_start(req: ProcessStartRequest):
+    try:
+        return processes.start(req.path)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/processes/{process_id}")
+def process_detail(process_id: int):
+    record = processes.get_process(process_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Processus introuvable")
+    return record
+
+
+@app.get("/processes/{process_id}/logs")
+def process_logs(process_id: int):
+    result = processes.read_log(process_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Processus introuvable")
+    return result
+
+
+@app.delete("/processes/{process_id}")
+def process_stop(process_id: int):
+    record = processes.stop(process_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Processus introuvable")
+    if record["status"] == "orphaned":
+        raise HTTPException(status_code=409, detail="Processus démarré avant le dernier redémarrage : arrêt manuel requis pour éviter un risque de PID réutilisé.")
+    return record
 
 @app.get("/resources")
 def resource_snapshot():
@@ -227,6 +270,21 @@ def workspace_verification(req: VerificationRequest):
     """Run explicit, read-only checks against workspace artifacts."""
     try:
         result = verification.verify_workspace(req.checks)
+        result["run_id"] = db.record_verification_run(req.checks, result)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+class ExternalVerificationRequest(BaseModel):
+    checks: list[dict] = Field(min_length=1, max_length=10)
+
+
+@app.post("/verification/external")
+def external_effect_verification(req: ExternalVerificationRequest):
+    """Probe explicitly requested local HTTP endpoints and TCP ports."""
+    try:
+        result = external_verification.verify_external_checks(req.checks)
         result["run_id"] = db.record_verification_run(req.checks, result)
         return result
     except ValueError as exc:

@@ -23,5 +23,5 @@ def snapshot():
         "pid": os.getpid(),
         "workspace": {"file_count": len(files), "total_bytes": total_bytes, "files": files[:500]},
         "storage": {"total_bytes": disk.total, "free_bytes": disk.free},
-        "limits": {"workspace_only": True, "arbitrary_process_control": False}
+        "limits": {"workspace_only": True, "managed_process_control": True, "python_execution": "resource-limited subprocess; not an OS sandbox", "arbitrary_process_control": False}
     }
