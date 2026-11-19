@@ -102,8 +102,10 @@ def run_script(relative_path, timeout=DEFAULT_TIMEOUT):
         timed_out = True
         try:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                               capture_output=True, timeout=5, check=False)
+                killed = subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                        capture_output=True, timeout=5, check=False)
+                if killed.returncode != 0:
+                    process.kill()
             else:
                 os.killpg(process.pid, signal.SIGKILL)
         except (OSError, subprocess.TimeoutExpired):
