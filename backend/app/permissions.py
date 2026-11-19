@@ -76,10 +76,20 @@ def _summary(arguments):
     return json.dumps(safe, ensure_ascii=False, sort_keys=True)[:2000]
 
 
+def _result_summary(result):
+    if isinstance(result, str):
+        raw = result.encode("utf-8", errors="replace")
+        return json.dumps({"type": "text", "length": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
+    if isinstance(result, dict):
+        safe = {key: result[key] for key in ("status", "returncode", "id", "error") if key in result and isinstance(result[key], (str, int, float, bool))}
+        return json.dumps({"type": "object", "keys": sorted(result.keys()), "metadata": safe}, ensure_ascii=False)[:1000]
+    return json.dumps({"type": type(result).__name__, "value": result if isinstance(result, (int, float, bool)) or result is None else None})
+
+
 def _audit(event, tool, summary, decision, actor, result=""):
     with db.connect() as conn:
         conn.execute("""INSERT INTO permission_audit(event,tool,arguments_summary,decision,actor,result_summary)
-            VALUES(?,?,?,?,?,?)""", (event, tool, summary, decision, actor, str(result)[:1000]))
+            VALUES(?,?,?,?,?,?)""", (event, tool, summary, decision, actor, _result_summary(result)[:1000]))
 
 
 def get_config():
@@ -126,7 +136,7 @@ def dispatch(tool, arguments, executor):
         _audit("tool_call", tool, summary, "allowed", "agent", str(result)[:1000])
         return result
     except Exception as exc:
-        _audit("tool_call", tool, summary, "error", "agent", str(exc)[:1000])
+        _audit("tool_call", tool, summary, "error", "agent", _result_summary({"error_type": type(exc).__name__})[:1000])
         raise
 
 
@@ -169,11 +179,11 @@ def decide(request_id, approve, executor, actor="user"):
         raise PermissionError("Le profil actif n'autorise plus cette action.")
     try:
         result = executor(tool, arguments)
-        result_summary = str(result)[:1000]
+        result_summary = _result_summary(result)[:1000]
         status = "executed"
         _audit("approval_execution", tool, summary, "executed", actor, result_summary)
     except Exception as exc:
-        result_summary = str(exc)[:1000]
+        result_summary = _result_summary({"error_type": type(exc).__name__})[:1000]
         status = "failed"
         _audit("approval_execution", tool, summary, "failed", actor, result_summary)
         raise
