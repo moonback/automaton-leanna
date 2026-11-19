@@ -257,8 +257,8 @@ def set_objective_status(objective_id, status):
                 next_status="pending" if status=="paused" else "skipped"
                 c.execute("""UPDATE objective_steps SET status=?,task_id=NULL,updated_at=CURRENT_TIMESTAMP
                              WHERE id=?""",(next_status,step["id"]))
-        c.execute("UPDATE objectives SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                  (status,objective_id))
+        c.execute("""UPDATE objectives SET status=?,supervisor_state=CASE WHEN ?='active' THEN 'monitoring' ELSE supervisor_state END,
+                     updated_at=CURRENT_TIMESTAMP WHERE id=?""",(status,status,objective_id))
         return True
 
 def retry_objective_step(objective_id, step_id):
@@ -326,6 +326,14 @@ def record_supervision(objective_id, decision, note, new_steps=None):
         c.execute("INSERT INTO objective_events(objective_id,event_type,message) VALUES(?,?,?)",
                   (objective_id,"supervision_"+decision,note[:2000]))
         return True
+
+def record_supervision_error(objective_id, error):
+    with connect() as c:
+        c.execute("""UPDATE objectives SET supervisor_note=?,supervised_at=CURRENT_TIMESTAMP,
+                     updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'""",
+                  (("Erreur de supervision : "+str(error))[:2000],objective_id))
+        c.execute("INSERT INTO objective_events(objective_id,event_type,message) VALUES(?,?,?)",
+                  (objective_id,"supervision_error",str(error)[:2000]))
 
 def objective_history(objective_id):
     with connect() as c:
