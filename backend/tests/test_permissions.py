@@ -50,7 +50,7 @@ class PermissionManagerTests(unittest.TestCase):
             permissions.decide(request_id, True, lambda name, args: None)
 
     def test_denied_approval_never_executes(self):
-        permissions.set_profile("sandbox_execution")
+        permissions.set_profile("admin")
         result = permissions.dispatch("run_python", {"path": "task.py"}, lambda *_: None)
         called = []
         decision = permissions.decide(result["request_id"], False,
