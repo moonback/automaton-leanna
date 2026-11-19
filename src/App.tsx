@@ -16,7 +16,8 @@ type ResourceSnapshot = {
   storage: { total_bytes: number; free_bytes: number };
 };
 type AgentResult = { mode: string; agents: Record<string, string> };
-type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };\ntype Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
+type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
+type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -39,7 +40,11 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([{ role: 'assistant', content: 'Automaton est prêt. Décris une tâche à accomplir dans son espace de travail.' }]);
   const [prompt, setPrompt] = useState('');
   const [taskPrompt, setTaskPrompt] = useState('');
-  const [tasks, setTasks] = useState<Task[]>([]);\n  const [objectives, setObjectives] = useState<Objective[]>([]);\n  const [goalTitle, setGoalTitle] = useState('');\n  const [goalDescription, setGoalDescription] = useState('');\n  const [goalPriority, setGoalPriority] = useState(3);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [objectives, setObjectives] = useState<Objective[]>([]);
+  const [goalTitle, setGoalTitle] = useState('');
+  const [goalDescription, setGoalDescription] = useState('');
+  const [goalPriority, setGoalPriority] = useState(3);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Connexion…');
   const [workspace, setWorkspace] = useState<string[]>([]);
@@ -80,7 +85,8 @@ export default function App() {
     setMemories(data.memories);
   }
   async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
-  async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }\n  async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); setObjectives(data.objectives); }
+  async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
+  async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); setObjectives(data.objectives); }
   async function refreshAll() {
     setError('');
     await refreshBase();
@@ -182,7 +188,8 @@ export default function App() {
 
   const nav: { id: Page; label: string; icon: typeof Bot }[] = [
     { id: 'agent', label: 'Agent', icon: Bot },
-    { id: 'tasks', label: 'File de tâches', icon: ListTodo },\n    { id: 'objectives', label: 'Objectifs', icon: Target },
+    { id: 'tasks', label: 'File de tâches', icon: ListTodo },
+    { id: 'objectives', label: 'Objectifs', icon: Target },
     { id: 'heartbeat', label: 'Heartbeat', icon: Activity },
     { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'resources', label: 'Ressources', icon: Gauge },
