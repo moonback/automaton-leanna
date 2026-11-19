@@ -5,7 +5,7 @@ import psutil
 from .config import WORKSPACE, DATA
 
 def snapshot():
-    disk = shutil.disk_usage(DATA)
+    disk = shutil.disk_usage(str(DATA))
     memory = psutil.virtual_memory()
     network = psutil.net_io_counters()
     files = []
