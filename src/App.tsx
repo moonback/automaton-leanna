@@ -15,7 +15,8 @@ type ResourceSnapshot = {
   workspace: { file_count: number; total_bytes: number; files: { path: string; size: number }[] };
   storage: { total_bytes: number; free_bytes: number };
 };
-type AgentResult = { mode: string; agents: Record<string, string> };\ntype Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
+type AgentResult = { mode: string; agents: Record<string, string> };
+type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -36,7 +37,9 @@ function formatBytes(value: number) {
 export default function App() {
   const [page, setPage] = useState<Page>('agent');
   const [messages, setMessages] = useState<Message[]>([{ role: 'assistant', content: 'Automaton est prêt. Décris une tâche à accomplir dans son espace de travail.' }]);
-  const [prompt, setPrompt] = useState('');\n  const [taskPrompt, setTaskPrompt] = useState('');\n  const [tasks, setTasks] = useState<Task[]>([]);
+  const [prompt, setPrompt] = useState('');
+  const [taskPrompt, setTaskPrompt] = useState('');
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Connexion…');
   const [workspace, setWorkspace] = useState<string[]>([]);
@@ -76,7 +79,8 @@ export default function App() {
     const data = await request<{ memories: Memory[] }>('/memory');
     setMemories(data.memories);
   }
-  async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }\n  async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
+  async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
+  async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
   async function refreshAll() {
     setError('');
     await refreshBase();
@@ -102,7 +106,20 @@ export default function App() {
       setMessages(current => [...current, { role: 'assistant', content: `Erreur : ${e instanceof Error ? e.message : 'Erreur inconnue'}` }]);
     } finally { setBusy(false); }
   }
-  async function enqueueTask() {\n    const value = taskPrompt.trim();\n    if (!value) return;\n    setError(''); setNotice('');\n    try {\n      await request('/tasks', { method: 'POST', body: JSON.stringify({ prompt: value }) });\n      setTaskPrompt(''); await refreshTasks(); setNotice('Tâche ajoutée à la file.');\n    } catch (e) { setError(e instanceof Error ? e.message : 'Ajout impossible'); }\n  }\n  async function cancelTask(id: number) {\n    try { await request(`/tasks/${id}`, { method: 'DELETE' }); await refreshTasks(); }\n    catch (e) { setError(e instanceof Error ? e.message : 'Annulation impossible'); }\n  }\n  async function saveMemory() {
+  async function enqueueTask() {
+    const value = taskPrompt.trim();
+    if (!value) return;
+    setError(''); setNotice('');
+    try {
+      await request('/tasks', { method: 'POST', body: JSON.stringify({ prompt: value }) });
+      setTaskPrompt(''); await refreshTasks(); setNotice('Tâche ajoutée à la file.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Ajout impossible'); }
+  }
+  async function cancelTask(id: number) {
+    try { await request(`/tasks/${id}`, { method: 'DELETE' }); await refreshTasks(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Annulation impossible'); }
+  }
+  async function saveMemory() {
     if (!memoryText.trim()) return;
     setError(''); setNotice('');
     try {
@@ -147,7 +164,8 @@ export default function App() {
   }
 
   const nav: { id: Page; label: string; icon: typeof Bot }[] = [
-    { id: 'agent', label: 'Agent', icon: Bot },\n    { id: 'tasks', label: 'File de tâches', icon: ListTodo },
+    { id: 'agent', label: 'Agent', icon: Bot },
+    { id: 'tasks', label: 'File de tâches', icon: ListTodo },
     { id: 'heartbeat', label: 'Heartbeat', icon: Activity },
     { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'resources', label: 'Ressources', icon: Gauge },
@@ -215,7 +233,8 @@ export default function App() {
             {task.status === 'queued' && <button className="dangericon" onClick={() => void cancelTask(task.id)} title="Annuler la tâche"><Trash2 size={16} /></button>}
           </article>) : <p className="empty">La file est vide.</p>}
         </section>}
-\n        {page === 'heartbeat' && <section className="panel">
+
+        {page === 'heartbeat' && <section className="panel">
           <div className="panelintro"><Activity /><div><h2>Cycles autonomes</h2><p>Le heartbeat lance périodiquement une tâche de contrôle dans le workspace.</p></div></div>
           {heartbeat && <>
             <label className="toggleline"><span><b>Activer le heartbeat</b><small>Désactivé par défaut au premier démarrage.</small></span><input type="checkbox" checked={!!heartbeat.enabled} onChange={e => setHeartbeat({ ...heartbeat, enabled: e.target.checked ? 1 : 0 })} /></label>
@@ -262,7 +281,9 @@ export default function App() {
         {page === 'improvements' && <section className="panel">
           <div className="panelintro"><GitBranch /><div><h2>Application de patch Git</h2><p>Le moteur applique un diff unifié au backend local, compile le code et annule le patch si la compilation échoue.</p></div></div>
           <div className="warning"><ShieldCheck size={17} /><span>Fonction désactivée par défaut. Elle exige AUTO_IMPROVE_ENABLED=true, un dépôt Git propre et un patch limité à backend/app/. Le patch appliqué n’est pas automatiquement commité.</span></div>
-          <label>Patch unifié<textarea className="patcharea" rows={15} value={patch} onChange={e => setPatch(e.target.value)} placeholder={'diff --git a/backend/app/... b/backend/app/...\n--- a/backend/app/...\n+++ b/backend/app/...'} /></label>
+          <label>Patch unifié<textarea className="patcharea" rows={15} value={patch} onChange={e => setPatch(e.target.value)} placeholder={'diff --git a/backend/app/... b/backend/app/...
+--- a/backend/app/...
++++ b/backend/app/...'} /></label>
           <button className="primary" disabled={busy || !patch.trim()} onClick={() => void applyPatch()}><GitBranch size={15} /> {busy ? 'Validation…' : 'Valider et appliquer le patch'}</button>
         </section>}
         <footer><Zap size={13} /> Automaton · Exécution locale · Clés API conservées côté backend</footer>
