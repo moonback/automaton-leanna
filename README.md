@@ -166,3 +166,11 @@ Le lancement échoue explicitement si Windows Sandbox n'est pas installé/activ�
 - Les tests automatisés valident la génération de configuration et les garde-fous ; ils ne remplacent pas un test réel sur une édition Windows compatible.
 
 Cette voie utilise Windows Sandbox plutôt qu'un AppContainer créé directement par Win32 : elle fournit une frontière VM prise en charge par Windows et permet de désactiver le réseau sans ajouter de dépendances natives tierces.
+
+## Gestionnaire de ressources en temps réel (1.4.0)
+- Le tableau de bord mesure l'utilisation CPU, la RAM, l'espace disque, les compteurs réseau cumulés et les dix processus les plus consommateurs de mémoire. Les mesures sont actualisées toutes les trois secondes.
+- Des seuils d'alerte CPU, RAM et disque sont configurables depuis l'interface et persistés dans SQLite. Une alerte s'affiche lorsque la mesure atteint ou dépasse son seuil.
+- GET /resources expose l'instantané système ; GET /resources/settings lit les seuils ; PUT /resources/settings les modifie (valeurs de 1 à 100 %).
+- Les informations de processus sont uniquement informatives : Automaton n'arrête pas et ne modifie pas les processus arbitraires du système. Le contrôle reste limité aux processus lancés et gérés par Automaton.
+- Les compteurs réseau sont cumulatifs depuis le démarrage du système, pas un débit instantané. La mesure GPU n'est pas encore prise en charge. L'historique graphique et la régulation automatique des tâches restent des évolutions futures.
+- Installer les dépendances backend avec pip install -r requirements.txt (inclut psutil).

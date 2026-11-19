@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
         pass
     processes.shutdown()
 
-app = FastAPI(title="Automaton Local API", version="1.3.0", lifespan=lifespan)
+app = FastAPI(title="Automaton Local API", version="1.4.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -78,7 +78,7 @@ class TeamRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "1.3.0"}
+    return {"status": "ok", "version": "1.4.0"}
 
 @app.get("/config")
 def public_config():
@@ -164,9 +164,25 @@ def process_stop(process_id: int):
         raise HTTPException(status_code=409, detail="Ce processus n'est plus contrôlable depuis cette session backend.")
     return record
 
+class ResourceSettingsRequest(BaseModel):
+    cpu_warning: float = Field(ge=1, le=100)
+    memory_warning: float = Field(ge=1, le=100)
+    disk_warning: float = Field(ge=1, le=100)
+
+
 @app.get("/resources")
 def resource_snapshot():
-    return resources.snapshot()
+    return resources.snapshot(db.get_resource_settings())
+
+
+@app.get("/resources/settings")
+def resource_settings():
+    return db.get_resource_settings()
+
+
+@app.put("/resources/settings")
+def resource_settings_update(req: ResourceSettingsRequest):
+    return db.set_resource_settings(req.cpu_warning, req.memory_warning, req.disk_warning)
 
 @app.post("/agents/run")
 async def agents_run(req: TeamRequest):
