@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from . import db, tools, memory, resources, improvements, agents, objectives, verification, external_verification, processes
+from . import db, tools, memory, resources, improvements, agents, objectives, verification, external_verification, processes, permissions, agent
 from .agent import run_agent
 from .heartbeat import worker
 from .tasks import worker as task_worker
@@ -19,6 +19,7 @@ async def lifespan(app: FastAPI):
     global heartbeat_task, task_worker_task, objective_worker_task
     db.init()
     processes.init()
+    permissions.init()
     heartbeat_task = asyncio.create_task(worker())
     task_worker_task = asyncio.create_task(task_worker())
     objective_worker_task = asyncio.create_task(objectives.worker())
@@ -72,6 +73,12 @@ class ObjectiveRequest(BaseModel):
 class ProcessStartRequest(BaseModel):
     path: str = Field(min_length=1, max_length=500)
     isolation: str = Field(default="job_object", max_length=40)
+
+class PermissionProfileRequest(BaseModel):
+    profile: str = Field(min_length=1, max_length=40)
+
+class PermissionDecisionRequest(BaseModel):
+    approve: bool
 
 class TeamRequest(BaseModel):
     task: str = Field(min_length=1, max_length=12000)
