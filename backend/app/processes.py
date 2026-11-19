@@ -98,10 +98,11 @@ def _refresh(process_id):
                             Path(config_path).unlink(missing_ok=True)
                         except OSError:
                             pass
-                    try:
-                        (Path(record["log_path"]).parent / "run.ps1").unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                    for artifact in ("run.ps1", "runner.py", "exit-code.txt"):
+                        try:
+                            (Path(record["log_path"]).parent / artifact).unlink(missing_ok=True)
+                        except OSError:
+                            pass
                 with db.connect() as conn:
                     conn.execute("""UPDATE managed_processes SET status='exited',exit_code=?,
                         updated_at=CURRENT_TIMESTAMP,stopped_at=CURRENT_TIMESTAMP
