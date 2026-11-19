@@ -23,6 +23,18 @@ def init():
             interval_seconds INTEGER NOT NULL DEFAULT 1800,
             prompt TEXT NOT NULL DEFAULT 'Vérifie les tâches planifiées et l’état du workspace. N’effectue aucune action destructive.')""")
         c.execute("""INSERT OR IGNORE INTO heartbeat_config(id) VALUES(1)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS tasks(
+            id INTEGER PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL
+                CHECK(status IN ('queued','running','succeeded','failed','cancelled')),
+            result TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            started_at DATETIME, finished_at DATETIME)""")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status_id ON tasks(status, id)")
+        # A process may have exited while a task was running. Requeue it on startup.
+        c.execute("""UPDATE tasks SET status='queued', updated_at=CURRENT_TIMESTAMP,
+                     started_at=NULL, finished_at=NULL,
+                     error='Reprise après arrêt du backend.'
+                     WHERE status='running'""")
         c.execute("""CREATE TABLE IF NOT EXISTS heartbeat_runs(
             id INTEGER PRIMARY KEY, status TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
             error TEXT NOT NULL DEFAULT '', started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -80,3 +92,48 @@ def heartbeat_history(limit=20):
         rows = c.execute("SELECT * FROM heartbeat_runs ORDER BY id DESC LIMIT ?",
                          (max(1, min(limit, 100)),)).fetchall()
     return [dict(r) for r in rows]
+
+
+def create_task(prompt):
+    with connect() as c:
+        cur = c.execute("INSERT INTO tasks(prompt,status) VALUES(?, 'queued')", (prompt,))
+        row = c.execute("SELECT * FROM tasks WHERE id=?", (cur.lastrowid,)).fetchone()
+        return dict(row)
+
+def list_tasks(limit=50):
+    with connect() as c:
+        rows = c.execute("SELECT * FROM tasks ORDER BY id DESC LIMIT ?",
+                         (max(1, min(limit, 200)),)).fetchall()
+    return [dict(row) for row in rows]
+
+def get_task(task_id):
+    with connect() as c:
+        row = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+    return dict(row) if row else None
+
+def claim_task():
+    # BEGIN IMMEDIATE prevents two local workers from claiming the same row.
+    with connect() as c:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT id,prompt FROM tasks WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
+        if row is None:
+            return None
+        cur = c.execute("""UPDATE tasks SET status='running', started_at=CURRENT_TIMESTAMP,
+                           updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='queued'""", (row["id"],))
+        if cur.rowcount != 1:
+            return None
+        return {"id": row["id"], "prompt": row["prompt"]}
+
+def finish_task(task_id, status, result="", error=""):
+    if status not in {"queued", "succeeded", "failed"}:
+        raise ValueError("Invalid task status")
+    with connect() as c:
+        c.execute("""UPDATE tasks SET status=?, result=?, error=?, updated_at=CURRENT_TIMESTAMP,
+                     finished_at=CASE WHEN ? IN ('succeeded','failed') THEN CURRENT_TIMESTAMP ELSE NULL END
+                     WHERE id=?""", (status, result[:12000], error[:4000], status, task_id))
+
+def cancel_task(task_id):
+    with connect() as c:
+        cur = c.execute("""UPDATE tasks SET status='cancelled', updated_at=CURRENT_TIMESTAMP,
+                           finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='queued'""", (task_id,))
+        return cur.rowcount > 0
