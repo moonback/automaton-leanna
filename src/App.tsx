@@ -6,7 +6,7 @@ import {
 
 const API = 'http://127.0.0.1:8765';
 type Message = { role: 'user' | 'assistant'; content: string };
-type Page = 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resources' | 'processes' | 'agents' | 'improvements';
+type Page = 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resources' | 'processes' | 'permissions' | 'agents' | 'improvements';
 type Memory = { id: number; content: string; tags: string; importance: number; created_at: string };
 type HeartbeatRun = { id: number; status: string; summary: string; error: string; started_at: string };
 type HeartbeatConfig = { enabled: number; interval_seconds: number; prompt: string };
@@ -18,7 +18,7 @@ type ResourceSnapshot = {
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
 type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
-type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string; stopped_at:string|null; isolation:string; isolation_profile:string; security_boundary:string };
+type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string; stopped_at:string|null; isolation:string; isolation_profile:string; security_boundary:string };\ntype PermissionConfig = { profile:string; updated_at:string; available_profiles:string[] };\ntype PermissionRequest = { id:number; tool:string; arguments_summary:string; status:string; expires_at:string; created_at:string; result_summary:string };\ntype AuditEvent = { id:number; event:string; tool:string; arguments_summary:string; decision:string; actor:string; result_summary:string; created_at:string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -46,7 +46,7 @@ export default function App() {
   const [processPath, setProcessPath] = useState('');
   const [processIsolation, setProcessIsolation] = useState<'job_object'|'windows_sandbox'>('windows_sandbox');
   const [selectedProcess, setSelectedProcess] = useState<number | null>(null);
-  const [processLog, setProcessLog] = useState('');
+  const [processLog, setProcessLog] = useState('');\n  const [permissionConfig, setPermissionConfig] = useState<PermissionConfig | null>(null);\n  const [permissionRequests, setPermissionRequests] = useState<PermissionRequest[]>([]);\n  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [objectiveEvents, setObjectiveEvents] = useState<Record<number, {id:number;event_type:string;message:string;details?:string;created_at:string}[]>>({});
   const [objectiveRevisions, setObjectiveRevisions] = useState<Record<number, {id:number;revision:number;reason:string;plan_json:string;created_at:string}[]>>({});
@@ -94,17 +94,17 @@ export default function App() {
   }
   async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
   async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
-  async function refreshProcesses() { const data = await request<{ processes: ManagedProcess[] }>('/processes'); setManagedProcesses(data.processes); }
+  async function refreshProcesses() { const data = await request<{ processes: ManagedProcess[] }>('/processes'); setManagedProcesses(data.processes); }\n  async function refreshPermissions() {\n    const [config, requests, audit] = await Promise.all([request<PermissionConfig>('/permissions'), request<{requests:PermissionRequest[]}>('/permissions/requests'), request<{events:AuditEvent[]}>('/permissions/audit')]);\n    setPermissionConfig(config); setPermissionRequests(requests.requests); setAuditEvents(audit.events);\n  }
   async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); const details = await Promise.all(data.objectives.map(item => request<Objective>(`/objectives/${item.id}`))); setObjectives(details); }
   async function refreshAll() {
     setError('');
     await refreshBase();
-    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks(), refreshObjectives(), refreshProcesses()]); }
+    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks(), refreshObjectives(), refreshProcesses(), refreshPermissions()]); }
     catch (e) { setError(e instanceof Error ? e.message : 'Erreur de chargement'); }
   }
   useEffect(() => {
     void refreshAll();
-    const id = window.setInterval(() => { void refreshBase(); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); void refreshProcesses().catch(() => {}); }, 3000);
+    const id = window.setInterval(() => { void refreshBase(); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); void refreshProcesses().catch(() => {}); void refreshPermissions().catch(() => {}); }, 3000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -160,7 +160,7 @@ export default function App() {
     catch (e) { setError(e instanceof Error ? e.message : 'Annulation impossible'); }
   }
 
-  async function startManagedProcess() {
+  async function changePermissionProfile(profile:string) {\n    try { await request('/permissions/profile',{method:'PUT',body:JSON.stringify({profile})}); await refreshPermissions(); setNotice(`Profil de confiance : ${profile}`); }\n    catch(e) { setError(e instanceof Error ? e.message : 'Modification du profil impossible'); }\n  }\n  async function decidePermission(id:number, approve:boolean) {\n    try { await request(`/permissions/requests/${id}/decision`,{method:'POST',body:JSON.stringify({approve})}); await refreshPermissions(); setNotice(approve ? `Action #${id} approuvée et exécutée.` : `Action #${id} refusée.`); }\n    catch(e) { setError(e instanceof Error ? e.message : 'Décision impossible'); await refreshPermissions(); }\n  }\n\n  async function startManagedProcess() {
     const path = processPath.trim();
     if (!path) return;
     setError(''); setNotice('');
@@ -239,13 +239,13 @@ export default function App() {
     { id: 'heartbeat', label: 'Heartbeat', icon: Activity },
     { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'resources', label: 'Ressources', icon: Gauge },
-    { id: 'processes', label: 'Processus', icon: Cpu },
+    { id: 'processes', label: 'Processus', icon: Cpu },\n    { id: 'permissions', label: 'Permissions', icon: ShieldCheck },
     { id: 'agents', label: 'Multi-agents', icon: Users },
     { id: 'improvements', label: 'Auto-amélioration', icon: GitBranch }
   ];
   const titles: Record<Page, string> = {
     agent: 'Agent', tasks: 'File de tâches persistantes', objectives: 'Objectifs autonomes', heartbeat: 'Heartbeat', memory: 'Mémoire persistante',
-    resources: 'Gestionnaire de ressources', processes: 'Gestionnaire de processus', agents: 'Équipe multi-agents',
+    resources: 'Gestionnaire de ressources', processes: 'Gestionnaire de processus', permissions: 'Permissions et audit', agents: 'Équipe multi-agents',
     improvements: 'Auto-amélioration'
   };
 
@@ -391,7 +391,31 @@ export default function App() {
           {selectedProcess !== null && <section className="processlogs"><div className="tasktoolbar"><h3>Journal · processus #{selectedProcess}</h3><button className="secondary" onClick={()=>void loadProcessLog(selectedProcess)}>Recharger</button></div><pre>{processLog || 'Aucune sortie enregistrée.'}</pre></section>}
         </section>}
 
-        {page === 'agents' && <section className="panel">
+
+        {page === 'permissions' && <section className="panel">
+          <div className="panelintro"><ShieldCheck /><div><h2>Contrôle des capacités de l'agent</h2><p>Les permissions sont évaluées avant chaque appel d'outil. Les actions sensibles restent suspendues jusqu'à une décision humaine.</p></div></div>
+          {permissionConfig && <>
+            <label>Profil de confiance
+              <select value={permissionConfig.profile} onChange={e=>void changePermissionProfile(e.target.value)}>
+                <option value="observe_only">Observe only · lecture seule</option>
+                <option value="workspace_write">Workspace write · lecture et écriture workspace</option>
+                <option value="sandbox_execution">Sandbox execution · exécution avec approbation</option>
+                <option value="admin">Admin · toutes les capacités, approbation maintenue</option>
+              </select>
+            </label>
+            <div className="warning"><ShieldCheck size={17}/><span>Refus par défaut. run_python, start_process et stop_process exigent une approbation ponctuelle, même en profil Admin. Le profil Sandbox Execution lance les processus gérés via Windows Sandbox ; la disponibilité dépend de Windows. Le profil de permission ne remplace pas l'isolation système.</span></div>
+          </>}
+          <div className="tasktoolbar"><h3>Demandes d'approbation ({permissionRequests.filter(x=>x.status==='pending').length})</h3><button className="secondary" onClick={()=>void refreshPermissions()}>Actualiser</button></div>
+          {permissionRequests.length ? permissionRequests.map(item=><article className="taskrow" key={item.id}>
+            <div className="taskmeta"><b>#{item.id} · {item.tool}</b><span className={`statuspill ${item.status}`}>{item.status}</span><small>Expire : {new Date(item.expires_at).toLocaleString()}</small></div>
+            <pre className="permissionargs">{item.arguments_summary}</pre>
+            {item.status==='pending' && <div className="tasktoolbar"><button className="primary" onClick={()=>void decidePermission(item.id,true)}>Approuver et exécuter</button><button className="secondary" onClick={()=>void decidePermission(item.id,false)}>Refuser</button></div>}
+            {item.result_summary && <small className="processmeta">{item.result_summary}</small>}
+          </article>) : <p className="empty">Aucune demande d'approbation.</p>}
+          <h3>Journal d'audit · {auditEvents.length} événements récents</h3>
+          {auditEvents.length ? auditEvents.map(item=><div className="runrow" key={item.id}><span className={`statuspill ${item.decision}`}>{item.decision}</span><div><b>{item.event} · {item.tool}</b><small>{item.actor} · {item.created_at}</small><small>{item.arguments_summary}</small>{item.result_summary && <small>{item.result_summary}</small>}</div></div>) : <p className="empty">Aucun événement enregistré.</p>}
+        </section>}
+\n        {page === 'agents' && <section className="panel">
           <div className="panelintro"><Users /><div><h2>Équipe spécialisée</h2><p>Trois rôles exécutés séquentiellement via le fournisseur IA configuré.</p></div></div>
           <div className="rolegrid"><div><b>01 · Planificateur</b><small>Décompose la tâche en étapes.</small></div><div><b>02 · Analyste</b><small>Identifie faits, risques et inconnues.</small></div><div><b>03 · Réviseur</b><small>Recherche erreurs et tests manquants.</small></div></div>
           <label>Tâche à déléguer<textarea rows={4} value={teamTask} onChange={e => setTeamTask(e.target.value)} placeholder="Décris une tâche à analyser par l'équipe…" /></label>
