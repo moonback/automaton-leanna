@@ -16,7 +16,7 @@ type ResourceSnapshot = {
   storage: { total_bytes: number; free_bytes: number };
 };
 type AgentResult = { mode: string; agents: Record<string, string> };
-type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
+type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
 type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -41,7 +41,7 @@ export default function App() {
   const [prompt, setPrompt] = useState('');
   const [taskPrompt, setTaskPrompt] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [objectives, setObjectives] = useState<Objective[]>([]);
+  const [objectives, setObjectives] = useState<Objective[]>([]);\n  const [objectiveEvents, setObjectiveEvents] = useState<Record<number, {id:number;event_type:string;message:string;created_at:string}[]>>({});
   const [goalTitle, setGoalTitle] = useState('');
   const [goalDescription, setGoalDescription] = useState('');
   const [goalPriority, setGoalPriority] = useState(3);
@@ -134,6 +134,14 @@ export default function App() {
     try { await request(`/objectives/${id}/status?status=${status}`,{method:'PUT'}); await refreshObjectives(); }
     catch(e) { setError(e instanceof Error ? e.message : 'Modification impossible'); }
   }
+  async function superviseObjective(id:number) {
+    try { await request(`/objectives/${id}/supervise`,{method:'POST'}); await refreshObjectives(); }
+    catch(e) { setError(e instanceof Error ? e.message : 'Supervision impossible'); }
+  }
+  async function loadObjectiveHistory(id:number) {
+    try { const data=await request<{events:{id:number;event_type:string;message:string;created_at:string}[]}>(`/objectives/${id}/history`); setObjectiveEvents(current=>({...current,[id]:data.events})); }
+    catch(e) { setError(e instanceof Error ? e.message : 'Historique indisponible'); }
+  }
   async function retryObjectiveStep(objectiveId:number,stepId:number) {
     try { await request(`/objectives/${objectiveId}/steps/${stepId}/retry`,{method:'POST'}); await refreshObjectives(); }
     catch(e) { setError(e instanceof Error ? e.message : 'Relance impossible'); }
@@ -205,7 +213,7 @@ export default function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand"><div className="logo"><Bot /></div><div><b>Automaton</b><small>LOCAL AGENT · 0.6.0</small></div></div>
+        <div className="brand"><div className="logo"><Bot /></div><div><b>Automaton</b><small>LOCAL AGENT · 0.7.0</small></div></div>
         <div className="navgroup">{nav.map(item => {
           const Icon = item.icon;
           return <button key={item.id} className={`nav ${page === item.id ? 'active' : ''}`} onClick={() => { setPage(item.id); setError(''); setNotice(''); }}>
@@ -260,7 +268,7 @@ export default function App() {
 
 
         {page === 'objectives' && <section className="panel">
-          <div className="panelintro"><Target /><div><h2>Gestionnaire d'objectifs</h2><p>Définis une mission durable. Le planificateur IA crée des étapes ordonnées, puis le worker les exécute une par une via la file SQLite.</p></div></div>
+          <div className="panelintro"><Target /><div><h2>Gestionnaire d'objectifs</h2><p>Définis une mission durable. Le superviseur évalue les preuves, détecte les blocages et peut ajouter des étapes correctives en conservant les versions précédentes du plan.</p></div></div>
           <label>Titre de l'objectif<input value={goalTitle} onChange={e=>setGoalTitle(e.target.value)} maxLength={160} placeholder="Ex. Préparer une version stable de mon application" /></label>
           <label>Description et critères de réussite<textarea rows={4} value={goalDescription} onChange={e=>setGoalDescription(e.target.value)} maxLength={4000} placeholder="Décris le résultat attendu, les contraintes et les critères de validation…" /></label>
           <label>Priorité<select value={goalPriority} onChange={e=>setGoalPriority(Number(e.target.value))}>{[1,2,3,4,5].map(n=><option key={n} value={n}>{n} / 5</option>)}</select></label>
@@ -270,11 +278,19 @@ export default function App() {
             <div className="taskmeta"><b>#{goal.id} · {goal.title}</b><span className={`statuspill ${goal.status}`}>{goal.status}</span><small>Priorité {goal.priority}/5 · {goal.completed_steps || 0}/{goal.total_steps || 0} étapes</small></div>
             <p>{goal.description}</p>
             <div className="progress"><div style={{width:`${goal.total_steps ? (goal.completed_steps/goal.total_steps)*100 : 0}%`}} /></div>
+            <div className="supervisorbox">
+              <b>Supervision : {goal.supervisor_state || 'monitoring'}</b>
+              <small>{goal.supervisor_note || 'En attente de la première évaluation.'}</small>
+              {goal.supervised_at && <small>Dernière évaluation : {goal.supervised_at}</small>}
+            </div>
             <div className="tasktoolbar">
+              <button className="secondary" onClick={()=>void superviseObjective(goal.id)}>Superviser maintenant</button>
+              <button className="secondary" onClick={()=>void loadObjectiveHistory(goal.id)}>Historique</button>
               {goal.status==='active' && <button className="secondary" onClick={()=>void changeObjectiveStatus(goal.id,'paused')}>Mettre en pause</button>}
               {goal.status==='paused' && <button className="secondary" onClick={()=>void changeObjectiveStatus(goal.id,'active')}>Reprendre</button>}
               {(goal.status==='active'||goal.status==='paused') && <button className="dangericon" onClick={()=>void changeObjectiveStatus(goal.id,'cancelled')}>Annuler</button>}
             </div>
+            {objectiveEvents[goal.id]?.map(event=><div className="runrow" key={event.id}><span className="statuspill">{event.event_type}</span><div><b>{event.message}</b><small>{event.created_at}</small></div></div>)}
             {goal.steps?.map(step=><div className="runrow" key={step.id}><span className={`statuspill ${step.status}`}>{step.status}</span><div><b>{step.position}. {step.title}</b><small>{step.description}</small>{step.result && <small>Résultat : {step.result}</small>}{step.error && <small className="taskerror">{step.error}</small>}</div>{step.status==='failed' && <button className="secondary" onClick={()=>void retryObjectiveStep(goal.id,step.id)}>Relancer</button>}</div>)}
           </article>) : <p className="empty">Aucun objectif défini.</p>}
         </section>}
