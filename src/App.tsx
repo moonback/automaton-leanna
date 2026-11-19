@@ -1,19 +1,19 @@
 import { useEffect, useState } from 'react';
 import {
   Activity, Bot, Brain, Cpu, Folder, Gauge, GitBranch, ListTodo, Play, RefreshCw, Target,
-  Send, Settings, ShieldCheck, Trash2, Users, Zap
+  Send, Settings, ShieldCheck, Trash2, Users, Zap, CircleCheck, Clock3, HardDrive, MemoryStick, ArrowUpRight
 } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8765';
 type Message = { role: 'user' | 'assistant'; content: string };
-type Page = 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resources' | 'agents' | 'improvements';
+type Page = 'overview' | 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resources' | 'agents' | 'improvements';
 type Memory = { id: number; content: string; tags: string; importance: number; created_at: string };
 type HeartbeatRun = { id: number; status: string; summary: string; error: string; started_at: string };
 type HeartbeatConfig = { enabled: number; interval_seconds: number; prompt: string };
 type ResourceSnapshot = {
   platform: string; python: string; pid: number;
   workspace: { file_count: number; total_bytes: number; files: { path: string; size: number }[] };
-  storage: { total_bytes: number; free_bytes: number };
+  storage: { total_bytes: number; free_bytes: number };\n  system: { cpu_percent: number; memory_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_percent: number; network_sent_bytes: number; network_received_bytes: number; gpu_available: boolean };
 };
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
@@ -36,7 +36,7 @@ function formatBytes(value: number) {
 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>('agent');
+  const [page, setPage] = useState<Page>('overview');
   const [messages, setMessages] = useState<Message[]>([{ role: 'assistant', content: 'Automaton est prêt. Décris une tâche à accomplir dans son espace de travail.' }]);
   const [prompt, setPrompt] = useState('');
   const [taskPrompt, setTaskPrompt] = useState('');
@@ -197,7 +197,7 @@ export default function App() {
   }
 
   const nav: { id: Page; label: string; icon: typeof Bot }[] = [
-    { id: 'agent', label: 'Agent', icon: Bot },
+    { id: 'overview', label: 'Vue d’ensemble', icon: Gauge },\n    { id: 'agent', label: 'Agent', icon: Bot },
     { id: 'tasks', label: 'File de tâches', icon: ListTodo },
     { id: 'objectives', label: 'Objectifs', icon: Target },
     { id: 'heartbeat', label: 'Heartbeat', icon: Activity },
@@ -207,7 +207,7 @@ export default function App() {
     { id: 'improvements', label: 'Auto-amélioration', icon: GitBranch }
   ];
   const titles: Record<Page, string> = {
-    agent: 'Agent', tasks: 'File de tâches persistantes', objectives: 'Objectifs autonomes', heartbeat: 'Heartbeat', memory: 'Mémoire persistante',
+    overview: 'Centre de contrôle', agent: 'Agent', tasks: 'File de tâches persistantes', objectives: 'Objectifs autonomes', heartbeat: 'Heartbeat', memory: 'Mémoire persistante',
     resources: 'Gestionnaire de ressources', agents: 'Équipe multi-agents',
     improvements: 'Auto-amélioration'
   };
@@ -229,7 +229,47 @@ export default function App() {
         {error && <div className="alert error">{error}</div>}
         {notice && <div className="alert success">{notice}</div>}
 
-        {page === 'agent' && <>
+
+        {page === 'overview' && <>
+          <section className="overview-status">
+            <div className="status-orb"><CircleCheck size={27}/></div>
+            <div className="overview-status-copy"><span className="eyebrow">ÉTAT DU SYSTÈME</span><h2>{status.startsWith('Connecté') ? 'Automaton opérationnel' : 'Backend indisponible'}</h2><p>{status} · {provider} / {model}</p></div>
+            <div className="supervision-state"><span className={heartbeat?.enabled ? 'live-dot' : 'idle-dot'} />Supervision {heartbeat?.enabled ? 'active' : 'en pause'}</div>
+          </section>
+          <section className="overview-metrics">
+            <article className="overview-metric"><div className="metric-icon cyan"><Cpu/></div><div><small>CPU</small><strong>{resources ? \`\${resources.system.cpu_percent.toFixed(0)}%\` : '—'}</strong><span>Utilisation actuelle</span></div><div className="meter"><i style={{width:\`\${resources?.system.cpu_percent || 0}%\`}}/></div></article>
+            <article className="overview-metric"><div className="metric-icon violet"><MemoryStick/></div><div><small>RAM</small><strong>{resources ? \`\${resources.system.memory_percent.toFixed(0)}%\` : '—'}</strong><span>{resources ? \`\${formatBytes(resources.system.memory_used_bytes)} / \${formatBytes(resources.system.memory_total_bytes)}\` : 'Chargement…'}</span></div><div className="meter"><i style={{width:\`\${resources?.system.memory_percent || 0}%\`}}/></div></article>
+            <article className="overview-metric"><div className="metric-icon blue"><HardDrive/></div><div><small>STOCKAGE LIBRE</small><strong>{resources ? formatBytes(resources.storage.free_bytes) : '—'}</strong><span>Sur {resources ? formatBytes(resources.storage.total_bytes) : '—'}</span></div><div className="meter"><i style={{width:\`\${resources?.system.disk_percent || 0}%\`}}/></div></article>
+            <article className="overview-metric"><div className="metric-icon green"><Bot/></div><div><small>ÉQUIPE MULTI-AGENTS</small><strong>3 rôles</strong><span>Exécution séquentielle</span></div><div className="metric-foot">Planifier · Analyser · Réviser</div></article>
+          </section>
+          <section className="overview-grid">
+            <article className="dash-card health-card"><div className="dash-heading"><h3><Activity/> Supervision autonome</h3><span className={heartbeat?.enabled ? 'tag-success' : 'tag-muted'}>{heartbeat?.enabled ? 'ACTIVE' : 'INACTIVE'}</span></div>
+              <div className="health-main"><div className="health-ring"><ShieldCheck size={35}/></div><div><strong>{heartbeat?.enabled ? 'Cycle activé' : 'En attente'}</strong><p>{heartbeat ? \`Vérification toutes les \${heartbeat.interval_seconds}s\` : 'Configuration non chargée'}</p></div></div>
+              <div className="health-detail"><span>Dernier cycle</span><b>{heartbeatRuns[0]?.started_at || 'Aucun cycle enregistré'}</b></div>
+              <div className="health-detail"><span>Résultat</span><b>{heartbeatRuns[0]?.summary || heartbeatRuns[0]?.error || 'En attente de données'}</b></div>
+              <button className="dash-link" onClick={()=>setPage('heartbeat')}>Configurer le heartbeat <ArrowUpRight size={14}/></button>
+            </article>
+            <article className="dash-card"><div className="dash-heading"><h3><Target/> Objectifs en cours</h3><button className="dash-link" onClick={()=>setPage('objectives')}>Tout voir <ArrowUpRight size={14}/></button></div>
+              {objectives.filter(x=>x.status==='active'||x.status==='paused').slice(0,4).map(goal=><div className="goal-mini" key={goal.id}><div><b>{goal.title}</b><span>{goal.completed_steps || 0}/{goal.total_steps || 0} étapes · {goal.status}</span></div><strong>{goal.total_steps ? Math.round(goal.completed_steps/goal.total_steps*100) : 0}%</strong><div className="progress"><div style={{width:\`\${goal.total_steps ? goal.completed_steps/goal.total_steps*100 : 0}%\`}}/></div></div>)}
+              {!objectives.some(x=>x.status==='active'||x.status==='paused') && <p className="dash-empty">Aucun objectif actif. Crée un objectif pour démarrer une mission longue durée.</p>}
+            </article>
+            <article className="dash-card"><div className="dash-heading"><h3><ListTodo/> File des missions</h3><button className="dash-link" onClick={()=>setPage('tasks')}>Voir la file <ArrowUpRight size={14}/></button></div>
+              <div className="task-counts"><div><strong>{tasks.filter(t=>t.status==='running').length}</strong><span>En cours</span></div><div><strong>{tasks.filter(t=>t.status==='queued').length}</strong><span>En attente</span></div><div><strong>{tasks.filter(t=>t.status==='succeeded').length}</strong><span>Terminées</span></div></div>
+              {tasks.slice(0,4).map(task=><div className="activity-line" key={task.id}><span className={task.status==='failed'?'activity-dot warn':'activity-dot'}></span><div><b>{task.prompt}</b><small>{task.status} · {task.updated_at}</small></div></div>)}
+              {!tasks.length && <p className="dash-empty">Aucune tâche enregistrée.</p>}
+            </article>
+            <article className="dash-card resource-summary"><div className="dash-heading"><h3><Gauge/> Ressources système</h3><button className="dash-link" onClick={()=>setPage('resources')}>Détails <ArrowUpRight size={14}/></button></div>
+              {resources ? <><div className="resource-line"><span>CPU</span><b>{resources.system.cpu_percent.toFixed(1)}%</b></div><div className="mini-meter"><i style={{width:\`\${resources.system.cpu_percent}%\`}}/></div><div className="resource-line"><span>Mémoire vive</span><b>{resources.system.memory_percent.toFixed(1)}%</b></div><div className="mini-meter"><i style={{width:\`\${resources.system.memory_percent}%\`}}/></div><div className="resource-line"><span>Disque utilisé</span><b>{resources.system.disk_percent.toFixed(1)}%</b></div><div className="mini-meter"><i style={{width:\`\${resources.system.disk_percent}%\`}}/></div><p className="resource-foot">Réseau reçu {formatBytes(resources.system.network_received_bytes)} · envoyé {formatBytes(resources.system.network_sent_bytes)}</p></> : <p className="dash-empty">Chargement des métriques système…</p>}
+            </article>
+            <article className="dash-card"><div className="dash-heading"><h3><Clock3/> Activité récente</h3></div>
+              {heartbeatRuns.slice(0,3).map(run=><div className="activity-line" key={run.id}><span className="activity-dot"></span><div><b>{run.summary || run.error || 'Cycle autonome'}</b><small>{run.status} · {run.started_at}</small></div></div>)}
+              {objectives.slice(0,2).map(goal=><div className="activity-line" key={\`goal-\${goal.id}\`}><span className="activity-dot blue-dot"></span><div><b>Objectif · {goal.title}</b><small>{goal.completed_steps || 0}/{goal.total_steps || 0} étapes terminées</small></div></div>)}
+              {!heartbeatRuns.length && !objectives.length && <p className="dash-empty">L’activité apparaîtra ici au fur et à mesure de l’exécution.</p>}
+            </article>
+            <article className="dash-card quick-actions"><div className="dash-heading"><h3><Zap/> Accès rapide</h3></div><button onClick={()=>setPage('agent')}><Bot/>Ouvrir l’agent</button><button onClick={()=>setPage('tasks')}><Play/>Nouvelle tâche</button><button onClick={()=>setPage('agents')}><Users/>Équipe multi-agents</button><button onClick={()=>setPage('resources')}><Gauge/>Surveiller les ressources</button></article>
+          </section>
+        </>}
+\n        {page === 'agent' && <>
           <section className="metrics">
             <div className="metric"><Cpu /><div><small>FOURNISSEUR · MODÈLE</small><b>{provider} · {model}</b></div></div>
             <div className="metric"><Folder /><div><small>FICHIERS WORKSPACE</small><b>{workspace.length}</b></div></div>
