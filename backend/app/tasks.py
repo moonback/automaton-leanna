@@ -3,12 +3,13 @@ import logging
 
 from . import db
 from .agent import run_agent
+from . import objective_verification
 
 log = logging.getLogger(__name__)
 
 
 async def worker():
-    """Execute one persisted task at a time; queued tasks survive process restarts."""
+    """Execute persisted tasks; objective steps succeed only after deterministic checks pass."""
     while True:
         try:
             task = db.claim_task()
@@ -21,10 +22,15 @@ async def worker():
             try:
                 result = await run_agent(task["prompt"])
                 answer = result.get("answer", "Tâche terminée.")
-                db.finish_task(task_id, "succeeded", answer)
-                db.reconcile_objective_task(task_id, "succeeded", result=answer)
+                evidence = objective_verification.verify_task(task_id, result)
+                if evidence is None or evidence.get("success"):
+                    db.finish_task(task_id, "succeeded", answer)
+                    db.reconcile_objective_task(task_id, "succeeded", result=answer)
+                else:
+                    error = objective_verification.format_failure(evidence)
+                    db.finish_task(task_id, "failed", result=answer, error=error)
+                    db.reconcile_objective_task(task_id, "failed", result=answer, error=error)
             except asyncio.CancelledError:
-                # The task remains recoverable after restart.
                 db.finish_task(task_id, "queued", error="Worker arrêté ; tâche remise en attente.")
                 db.reconcile_objective_task(task_id, "queued", error="Worker arrêté ; tâche remise en attente.")
                 raise
