@@ -87,7 +87,7 @@ export default function App() {
   }
   async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
   async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
-  async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); setObjectives(data.objectives); }
+  async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); const details = await Promise.all(data.objectives.map(item => request<Objective>(`/objectives/${item.id}`))); setObjectives(details); }
   async function refreshAll() {
     setError('');
     await refreshBase();
