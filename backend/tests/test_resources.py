@@ -21,18 +21,21 @@ class ResourceSnapshotTests(unittest.TestCase):
 
     def test_snapshot_reports_metrics_processes_and_threshold_alerts(self):
         memory = SimpleNamespace(total=1000, available=100, used=900, percent=90.0)
-        disk_usage = SimpleNamespace(total=2000, used=1900, free=100, percent=95.0)
+        disk_usage = SimpleNamespace(total=2000, used=1900, free=100)
         net = SimpleNamespace(bytes_sent=10, bytes_recv=20, packets_sent=1, packets_recv=2)
         settings = {"cpu_warning": 80.0, "memory_warning": 80.0, "disk_warning": 90.0}
         with patch.object(resources.psutil, "cpu_percent", return_value=85.0), \
              patch.object(resources.psutil, "virtual_memory", return_value=memory), \
-             patch.object(resources.psutil, "disk_usage", return_value=disk_usage), \
+             patch.object(resources.psutil, "disk_usage", side_effect=AssertionError(
+                 "snapshot must not call psutil.disk_usage with a WindowsPath"
+             )), \
              patch.object(resources.psutil, "net_io_counters", return_value=net), \
              patch.object(resources.psutil, "cpu_count", side_effect=[8, 4]), \
              patch.object(resources.psutil, "process_iter", return_value=[]), \
-             patch.object(resources.shutil, "disk_usage", return_value=disk_usage):
+             patch.object(resources.shutil, "disk_usage", return_value=disk_usage) as disk_usage_mock:
             result = resources.snapshot(settings)
 
+        disk_usage_mock.assert_called_once_with(str(resources.DATA))
         self.assertEqual(result["cpu"]["percent"], 85.0)
         self.assertEqual(result["memory"]["percent"], 90.0)
         self.assertEqual(result["storage"]["percent"], 95.0)
