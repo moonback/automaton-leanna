@@ -18,7 +18,7 @@ type ResourceSnapshot = {
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
 type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
-type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string; stopped_at:string|null; isolation_profile:string; security_boundary:string };
+type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string; stopped_at:string|null; isolation:string; isolation_profile:string; security_boundary:string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -44,6 +44,7 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [managedProcesses, setManagedProcesses] = useState<ManagedProcess[]>([]);
   const [processPath, setProcessPath] = useState('');
+  const [processIsolation, setProcessIsolation] = useState<'job_object'|'windows_sandbox'>('windows_sandbox');
   const [selectedProcess, setSelectedProcess] = useState<number | null>(null);
   const [processLog, setProcessLog] = useState('');
   const [objectives, setObjectives] = useState<Objective[]>([]);
@@ -164,11 +165,11 @@ export default function App() {
     if (!path) return;
     setError(''); setNotice('');
     try {
-      const item = await request<ManagedProcess>('/processes', { method:'POST', body:JSON.stringify({path}) });
+      const item = await request<ManagedProcess>('/processes', { method:'POST', body:JSON.stringify({path, isolation:processIsolation}) });
       setProcessPath('');
       setSelectedProcess(item.id);
       await refreshProcesses();
-      setNotice(`Processus #${item.id} démarré (PID ${item.pid}).`);
+      setNotice(`Processus #${item.id} démarré (PID hôte ${item.pid}, ${item.isolation_profile}).`);
     } catch (e) { setError(e instanceof Error ? e.message : 'Démarrage impossible'); }
   }
   async function stopManagedProcess(id:number) {
@@ -373,12 +374,13 @@ export default function App() {
 
         {page === 'processes' && <section className="panel">
           <div className="panelintro"><Cpu /><div><h2>Processus gérés par Automaton</h2><p>Démarre uniquement des scripts Python déjà présents dans le workspace. Les processus, PID, états et journaux sont suivis dans SQLite.</p></div></div>
-          <div className="warning"><ShieldCheck size={17} /><span>Windows Job Objects appliquent des limites de mémoire, de durée CPU et de nombre de processus, et arrêtent l'arbre à la fermeture du backend. Ce mécanisme n'est pas AppContainer : le code conserve les droits fichiers et réseau du compte Windows.</span></div>
+          <div className="warning"><ShieldCheck size={17} /><span>Windows Sandbox fournit une isolation système plus forte : réseau, presse-papiers et vGPU désactivés ; dossier du script et runtime Python en lecture seule ; seul un dossier de journaux dédié est accessible en écriture. Windows Sandbox doit être activé sur Windows Pro/Entreprise/Éducation. Le profil Job Object reste disponible comme mode de compatibilité et ne bloque pas les accès fichiers/réseau du compte.</span></div>
           <label>Script Python du workspace<input value={processPath} onChange={e=>setProcessPath(e.target.value)} placeholder="workers/worker.py" /></label>
+          <label>Profil d'isolation<select value={processIsolation} onChange={e=>setProcessIsolation(e.target.value as 'job_object'|'windows_sandbox')}><option value="windows_sandbox">Windows Sandbox · isolation renforcée</option><option value="job_object">Job Object · limites de ressources</option></select></label>
           <button className="primary" disabled={!processPath.trim()} onClick={()=>void startManagedProcess()}><Play size={15}/> Démarrer le processus</button>
           <div className="tasktoolbar"><h3>Processus suivis ({managedProcesses.length})</h3><button className="secondary" onClick={()=>void refreshProcesses()}>Actualiser</button></div>
           {managedProcesses.length ? managedProcesses.map(item=><article className="taskrow" key={item.id}>
-            <div className="taskmeta"><b>#{item.id} · PID {item.pid}</b><span className={`statuspill ${item.status}`}>{item.status}</span><small>{item.isolation_profile}</small></div>
+            <div className="taskmeta"><b>#{item.id} · PID hôte {item.pid}</b><span className={`statuspill ${item.status}`}>{item.status}</span><small>{item.isolation_profile} · {item.security_boundary}</small></div>
             <p>{item.script}</p>
             <small className="processmeta">Démarré : {item.started_at} · Code de sortie : {item.exit_code ?? '—'}</small>
             <div className="tasktoolbar">
