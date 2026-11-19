@@ -23,3 +23,8 @@
 .statuspill.active, .statuspill.queued { color: var(--accent, #aab6ff); }
 .statuspill.completed, .statuspill.succeeded { color: #65c99a; }
 .statuspill.failed { color: #f08b8b; }
+
+
+.supervisorbox { display:grid; gap:6px; padding:12px 14px; margin-top:14px; border:1px solid #34445b; border-radius:9px; background:#142236; }
+.supervisorbox b { color:#a9d3f2; font-size:11px; }
+.supervisorbox small { color:#91a1b7; font-size:10px; line-height:1.5; overflow-wrap:anywhere; }
