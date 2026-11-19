@@ -19,6 +19,7 @@ type ResourceSnapshot = {
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
 type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string };
+type ResourcePoint = { at: string; cpu: number; memory: number; disk: number };
 type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -61,6 +62,8 @@ export default function App() {
   const [heartbeat, setHeartbeat] = useState<HeartbeatConfig | null>(null);
   const [heartbeatRuns, setHeartbeatRuns] = useState<HeartbeatRun[]>([]);
   const [resources, setResources] = useState<ResourceSnapshot | null>(null);
+  const [resourceHistory, setResourceHistory] = useState<ResourcePoint[]>([]);
+  const [alertThresholds, setAlertThresholds] = useState({ cpu: 85, memory: 90, disk: 90 });
   const [managedProcesses, setManagedProcesses] = useState<ManagedProcess[]>([]);
   const [processScript, setProcessScript] = useState('');
   const [processLogs, setProcessLogs] = useState<Record<number,string>>({});
@@ -91,7 +94,11 @@ export default function App() {
     const data = await request<{ memories: Memory[] }>('/memory');
     setMemories(data.memories);
   }
-  async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
+  async function refreshResources() {
+    const snapshot = await request<ResourceSnapshot>('/resources');
+    setResources(snapshot);
+    setResourceHistory(current => [...current, { at: new Date().toLocaleTimeString(), cpu: snapshot.system.cpu_percent, memory: snapshot.system.memory_percent, disk: snapshot.system.disk_percent }].slice(-40));
+  }
   async function refreshProcesses() { const data=await request<{processes:ManagedProcess[]}>('/processes'); setManagedProcesses(data.processes); }
   async function startManagedProcess() { if(!processScript.trim()) return; try { await request('/processes',{method:'POST',body:JSON.stringify({path:processScript.trim()})}); setProcessScript(''); await refreshProcesses(); setNotice('Processus démarré.'); } catch(e) { setError(e instanceof Error?e.message:'Démarrage impossible'); } }
   async function stopManagedProcess(id:number) { try { await request('/processes/'+id,{method:'DELETE'}); await refreshProcesses(); } catch(e) { setError(e instanceof Error?e.message:'Arrêt impossible'); } }
@@ -383,6 +390,24 @@ export default function App() {
               <div className="resourcecard"><small>PROCESSUS API</small><b>{resources.pid}</b><span>Python {resources.python}</span></div>
             </div>
             <p className="subtle">{resources.platform} · GPU : {resources.system.gpu_available ? 'disponible' : 'télémétrie non configurée'}</p>
+            <div className="resource-history">
+              <div className="history-heading"><div><h3>Historique des ressources</h3><p>Échantillons collectés pendant cette session · actualisation toutes les 3 secondes.</p></div><span>{resourceHistory.length} / 40 points</span></div>
+              <div className="history-grid">
+                {([{key:'cpu',label:'CPU',color:'#36bafa'},{key:'memory',label:'RAM',color:'#a58aff'},{key:'disk',label:'Disque',color:'#36d6a0'}] as const).map(metric => {
+                  const points = resourceHistory.map((point,index) => `${resourceHistory.length < 2 ? 0 : index / (resourceHistory.length - 1) * 100},${100 - Math.max(0,Math.min(100,point[metric.key]))}`).join(' ');
+                  const latest = resourceHistory[resourceHistory.length - 1]?.[metric.key] ?? 0;
+                  return <div className="history-card" key={metric.key}><div><b>{metric.label}</b><strong>{latest.toFixed(1)}%</strong></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`Historique ${metric.label}`}><polyline points={points} fill="none" stroke={metric.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" /></svg></div>;
+                })}
+              </div>
+              <div className="threshold-panel"><div><b>Seuils d’alerte</b><small>Une alerte apparaît lorsque la mesure dépasse le seuil défini.</small></div>
+                {([{key:'cpu',label:'CPU'},{key:'memory',label:'RAM'},{key:'disk',label:'Disque'}] as const).map(item => <label key={item.key}>{item.label}<div><input type="number" min="1" max="100" value={alertThresholds[item.key]} onChange={event=>setAlertThresholds(current=>({...current,[item.key]:Math.max(1,Math.min(100,Number(event.target.value)||1))}))}/><span>%</span></div></label>)}
+              </div>
+              {resources && ([
+                {key:'cpu',label:'CPU',value:resources.system.cpu_percent},
+                {key:'memory',label:'RAM',value:resources.system.memory_percent},
+                {key:'disk',label:'Disque',value:resources.system.disk_percent}
+              ] as const).filter(item=>item.value>=alertThresholds[item.key]).map(item=><div className="resource-warning" key={item.key}>Alerte {item.label} : {item.value.toFixed(1)}% (seuil {alertThresholds[item.key]}%).</div>)}
+            </div>
             <h3>Processus gérés par Automaton</h3>
             <div className="process-launch"><input value={processScript} onChange={e=>setProcessScript(e.target.value)} placeholder="Chemin d’un script Python du workspace" /><button className="primary" disabled={!processScript.trim()} onClick={()=>void startManagedProcess()}><Play size={14}/> Démarrer</button></div>
             {managedProcesses.map(proc=><article className="managed-process" key={proc.id}><div className="managed-process-head"><div><b>{proc.script}</b><small>PID {proc.pid} · {proc.status}{proc.exit_code!==null ? ' · code '+proc.exit_code : ''}</small></div><div className="process-buttons"><button className="secondary" onClick={()=>void loadProcessLog(proc.id)}>Logs</button>{['running','starting','stopping'].includes(proc.status) && <button className="secondary stop-process" onClick={()=>void stopManagedProcess(proc.id)}>Arrêter</button>}</div></div>{processLogs[proc.id]!==undefined && <pre className="process-log">{processLogs[proc.id] || 'Aucune sortie pour le moment.'}</pre>}</article>)}
