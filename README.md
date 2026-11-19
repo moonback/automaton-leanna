@@ -136,3 +136,33 @@ Les Windows Job Objects sont un mécanisme de gestion et de confinement des ress
 Une isolation de sécurité plus forte nécessitera une étape distincte : AppContainer avec jeton restreint et capacités minimales, ou exécution dans Windows Sandbox / une VM. La version 1.2.0 ne prétend pas fournir cette isolation.
 
 Tests ajoutés : `backend/tests/test_windows_job.py` vérifie l'assignation et l'arrêt d'un processus suspendu sur Windows ; le test est ignoré sur les autres systèmes.
+
+## Isolation Windows renforcée avec Windows Sandbox (1.3.0)
+
+Le gestionnaire de processus propose deux profils sur Windows :
+
+- `job_object` : profil léger de la version 1.2.0. Il limite les ressources et contrôle l'arbre de processus, mais ne réduit pas les permissions du compte.
+- `windows_sandbox` : lance le script dans une machine virtuelle Windows Sandbox dédiée. Ce profil est sélectionnable dans l'écran **Processus** ou via `POST /processes` avec `{"path":"worker.py","isolation":"windows_sandbox"}`.
+
+### Configuration du guest
+- Réseau désactivé (`Networking=Disable`).
+- Presse-papiers désactivé.
+- vGPU désactivé.
+- Mode Protected Client activé.
+- Mémoire guest fixée à 2 Go.
+- Seul le dossier parent du script est monté en lecture seule.
+- Le runtime Python de base est monté en lecture seule ; si le backend utilise un virtualenv, son dossier `site-packages` est également monté en lecture seule.
+- Un répertoire unique par session est monté en écriture pour le lanceur et les journaux. Il ne contient pas les autres fichiers du workspace.
+
+Le lancement échoue explicitement si Windows Sandbox n'est pas installé/activé ou si le runtime Python n'a pas une structure compatible. Une seule session Windows Sandbox est autorisée simultanément. L'API suit le PID hôte de `WindowsSandbox.exe`, et non le PID Python dans le guest.
+
+### Prérequis et limites
+- Windows 10/11 Pro, Entreprise ou Éducation avec la fonctionnalité **Windows Sandbox** activée.
+- Redémarrer Windows après activation de la fonctionnalité.
+- Le script peut lire les fichiers présents dans son dossier parent et le runtime Python monté. Ne stockez pas de secrets dans ces emplacements.
+- Le dossier de sortie mappé est accessible en écriture depuis le guest ; son contenu et les journaux doivent être considérés comme non fiables.
+- Une fermeture normale du backend demande l'arrêt des sessions qu'il possède. Après un crash brutal du backend, une session Sandbox peut rester ouverte : fermez-la manuellement depuis Windows Sandbox. Les anciens PID ne sont jamais tués automatiquement après redémarrage.
+- Le profil Sandbox ne garantit pas un plafond CPU strict. La mémoire du guest est limitée à 2 Go ; les limites CPU/processus détaillées restent celles du profil Job Object, pas du guest Sandbox.
+- Les tests automatisés valident la génération de configuration et les garde-fous ; ils ne remplacent pas un test réel sur une édition Windows compatible.
+
+Cette voie utilise Windows Sandbox plutôt qu'un AppContainer créé directement par Win32 : elle fournit une frontière VM prise en charge par Windows et permet de désactiver le réseau sans ajouter de dépendances natives tierces.
