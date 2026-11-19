@@ -82,7 +82,7 @@ def start(script_path):
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
-        kwargs["preexec_fn"] = _limits()
+        kwargs["preexec_fn"] = _limits(cpu_seconds=3600)
     process = subprocess.Popen(command, **kwargs)
 
     def drain_output(pipe, destination):
