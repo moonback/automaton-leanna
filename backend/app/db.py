@@ -213,7 +213,8 @@ def reconcile_objective_task(task_id, status, result="", error=""):
                                AND status NOT IN ('succeeded','skipped')""",(step["objective_id"],)).fetchone()[0]
         failed=c.execute("SELECT COUNT(*) FROM objective_steps WHERE objective_id=? AND status='failed'",
                          (step["objective_id"],)).fetchone()[0]
-        if remaining==0:
+        objective_status=c.execute("SELECT status FROM objectives WHERE id=?",(step["objective_id"],)).fetchone()
+        if remaining==0 and objective_status and objective_status["status"] == "active":
             c.execute("UPDATE objectives SET status='completed',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                       (step["objective_id"],))
         elif failed:
@@ -223,9 +224,21 @@ def reconcile_objective_task(task_id, status, result="", error=""):
 def set_objective_status(objective_id, status):
     if status not in {"active","paused","cancelled"}: raise ValueError("Statut invalide")
     with connect() as c:
-        cur=c.execute("UPDATE objectives SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN ('active','paused')",
-                      (status,objective_id))
-        return cur.rowcount > 0
+        current=c.execute("SELECT status FROM objectives WHERE id=?",(objective_id,)).fetchone()
+        if current is None or current["status"] in ("completed","cancelled"): return False
+        if status in ("paused","cancelled"):
+            queued=c.execute("SELECT id,task_id FROM objective_steps WHERE objective_id=? AND status='queued'",
+                             (objective_id,)).fetchall()
+            for step in queued:
+                if step["task_id"] is not None:
+                    c.execute("""UPDATE tasks SET status='cancelled',updated_at=CURRENT_TIMESTAMP,
+                                  finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='queued'""",(step["task_id"],))
+                next_status="pending" if status=="paused" else "skipped"
+                c.execute("""UPDATE objective_steps SET status=?,task_id=NULL,updated_at=CURRENT_TIMESTAMP
+                             WHERE id=?""",(next_status,step["id"]))
+        c.execute("UPDATE objectives SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                  (status,objective_id))
+        return True
 
 def retry_objective_step(objective_id, step_id):
     with connect() as c:
