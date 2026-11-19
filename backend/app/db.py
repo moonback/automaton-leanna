@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from .config import DATA
 
@@ -50,6 +51,23 @@ def init():
             error TEXT NOT NULL DEFAULT '', created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(objective_id, position))""")
         c.execute("CREATE INDEX IF NOT EXISTS idx_objective_steps_status ON objective_steps(objective_id,status,position)")
+
+        columns = {row["name"] for row in c.execute("PRAGMA table_info(objectives)").fetchall()}
+        if "supervisor_state" not in columns:
+            c.execute("ALTER TABLE objectives ADD COLUMN supervisor_state TEXT NOT NULL DEFAULT 'monitoring'")
+        if "supervisor_note" not in columns:
+            c.execute("ALTER TABLE objectives ADD COLUMN supervisor_note TEXT NOT NULL DEFAULT ''")
+        if "supervised_at" not in columns:
+            c.execute("ALTER TABLE objectives ADD COLUMN supervised_at DATETIME")
+        c.execute("""CREATE TABLE IF NOT EXISTS objective_events(
+            id INTEGER PRIMARY KEY, objective_id INTEGER NOT NULL REFERENCES objectives(id) ON DELETE CASCADE,
+            event_type TEXT NOT NULL, message TEXT NOT NULL, details TEXT NOT NULL DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS objective_revisions(
+            id INTEGER PRIMARY KEY, objective_id INTEGER NOT NULL REFERENCES objectives(id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL, reason TEXT NOT NULL, plan_json TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(objective_id,revision))""")
+
 
         c.execute("""CREATE TABLE IF NOT EXISTS heartbeat_runs(
             id INTEGER PRIMARY KEY, status TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
@@ -164,6 +182,12 @@ def create_objective(title, description, steps, priority=3, due_at=None):
         for position, step in enumerate(steps, 1):
             c.execute("""INSERT INTO objective_steps(objective_id,position,title,description)
                          VALUES(?,?,?,?)""", (objective_id, position, step["title"], step["description"]))
+    snapshot = [{"title": step["title"], "description": step["description"]} for step in steps]
+    with connect() as c:
+        c.execute("INSERT INTO objective_revisions(objective_id,revision,reason,plan_json) VALUES(?,1,'Plan initial',?)",
+                  (objective_id, json.dumps(snapshot, ensure_ascii=False)))
+        c.execute("INSERT INTO objective_events(objective_id,event_type,message) VALUES(?,?,?)",
+                  (objective_id,"created","Objectif créé et plan initial enregistré."))
     return get_objective(objective_id)
 
 def list_objectives(limit=50):
@@ -247,3 +271,68 @@ def retry_objective_step(objective_id, step_id):
                       (step_id,objective_id))
         if cur.rowcount: c.execute("UPDATE objectives SET status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?",(objective_id,))
         return cur.rowcount > 0
+
+def objective_supervision_candidates(interval_seconds=60):
+    with connect() as c:
+        rows=c.execute("""SELECT o.id FROM objectives o
+            WHERE o.status='active' AND o.supervisor_state!='blocked'
+            AND (o.supervised_at IS NULL OR o.supervised_at <= datetime('now', ?))
+            AND NOT EXISTS (SELECT 1 FROM objective_steps s WHERE s.objective_id=o.id
+                            AND s.status IN ('queued','running'))
+            ORDER BY o.priority DESC,o.id""",(f"-{max(30,min(interval_seconds,86400))} seconds",)).fetchall()
+    return [row["id"] for row in rows]
+
+def record_supervision(objective_id, decision, note, new_steps=None):
+    new_steps=new_steps or []
+    with connect() as c:
+        c.execute("BEGIN IMMEDIATE")
+        obj=c.execute("SELECT status FROM objectives WHERE id=?",(objective_id,)).fetchone()
+        if not obj or obj["status"]!="active": return False
+        rows=c.execute("SELECT * FROM objective_steps WHERE objective_id=? ORDER BY position",(objective_id,)).fetchall()
+        if any(row["status"] in ("queued","running") for row in rows): return False
+        current_revision=c.execute("SELECT COALESCE(MAX(revision),0) FROM objective_revisions WHERE objective_id=?",(objective_id,)).fetchone()[0]
+        if new_steps:
+            if len(rows)+len(new_steps)>20: 
+                decision="blocked"
+                note=(note+" Limite de 20 étapes atteinte; plan non modifié.")[:2000]
+                new_steps=[]
+            elif decision=="replan":
+                failed=[row for row in rows if row["status"]=="failed"]
+                for row in failed:
+                    c.execute("""UPDATE objective_steps SET status='skipped',updated_at=CURRENT_TIMESTAMP
+                                 WHERE id=?""",(row["id"],))
+                for step in new_steps:
+                    position=len(rows)+1
+                    c.execute("""INSERT INTO objective_steps(objective_id,position,title,description)
+                                 VALUES(?,?,?,?)""",(objective_id,position,step["title"],step["description"]))
+                    rows.append({"position":position,"title":step["title"],"description":step["description"]})
+                snapshot=[{"title":row["title"],"description":row["description"]} for row in rows]
+                c.execute("INSERT INTO objective_revisions(objective_id,revision,reason,plan_json) VALUES(?,?,?,?)",
+                          (objective_id,current_revision+1,"Adaptation supervisée",json.dumps(snapshot,ensure_ascii=False)))
+                c.execute("INSERT INTO objective_events(objective_id,event_type,message,details) VALUES(?,?,?,?)",
+                          (objective_id,"replanned",note,json.dumps({"added_steps":new_steps},ensure_ascii=False)))
+        if decision=="blocked":
+            state="blocked"
+        else:
+            state="monitoring"
+        if decision=="completed":
+            remaining=c.execute("SELECT COUNT(*) FROM objective_steps WHERE objective_id=? AND status!='succeeded'",
+                                (objective_id,)).fetchone()[0]
+            if remaining:
+                decision="blocked"; state="blocked"
+                note=(note+" Le superviseur refuse de clôturer: des étapes ne sont pas réussies.")[:2000]
+            else:
+                c.execute("UPDATE objectives SET status='completed',completed_at=CURRENT_TIMESTAMP WHERE id=?",(objective_id,))
+        c.execute("""UPDATE objectives SET supervisor_state=?,supervisor_note=?,
+                     supervised_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                  (state,note[:2000],objective_id))
+        c.execute("INSERT INTO objective_events(objective_id,event_type,message) VALUES(?,?,?)",
+                  (objective_id,"supervision_"+decision,note[:2000]))
+        return True
+
+def objective_history(objective_id):
+    with connect() as c:
+        events=c.execute("SELECT * FROM objective_events WHERE objective_id=? ORDER BY id DESC LIMIT 100",(objective_id,)).fetchall()
+        revisions=c.execute("SELECT id,revision,reason,plan_json,created_at FROM objective_revisions WHERE objective_id=? ORDER BY revision DESC",(objective_id,)).fetchall()
+    return {"events":[dict(row) for row in events],"revisions":[dict(row) for row in revisions]}
+
