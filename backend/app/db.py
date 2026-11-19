@@ -67,6 +67,15 @@ def init():
             id INTEGER PRIMARY KEY, objective_id INTEGER NOT NULL REFERENCES objectives(id) ON DELETE CASCADE,
             revision INTEGER NOT NULL, reason TEXT NOT NULL, plan_json TEXT NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(objective_id,revision))""")
+        legacy_objectives=c.execute("""SELECT id FROM objectives
+            WHERE NOT EXISTS (SELECT 1 FROM objective_revisions r WHERE r.objective_id=objectives.id)""").fetchall()
+        for legacy in legacy_objectives:
+            legacy_steps=c.execute("SELECT title,description FROM objective_steps WHERE objective_id=? ORDER BY position",
+                                   (legacy["id"],)).fetchall()
+            snapshot=[{"title":row["title"],"description":row["description"]} for row in legacy_steps]
+            c.execute("INSERT INTO objective_revisions(objective_id,revision,reason,plan_json) VALUES(?,1,?,?)",
+                      (legacy["id"],"Plan existant archivé lors de la migration",json.dumps(snapshot,ensure_ascii=False)))
+
 
 
         c.execute("""CREATE TABLE IF NOT EXISTS heartbeat_runs(
