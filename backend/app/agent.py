@@ -5,7 +5,7 @@ from .config import (
     API_KEY, BASE_URL, MODEL, MAX_STEPS, PROVIDER,
     OPENROUTER_SITE_URL, OPENROUTER_APP_NAME,
 )
-from . import db, tools, memory
+from . import db, tools, memory, processes
 
 SYSTEM = (
     "Tu es Automaton, un agent local. Accomplis la tâche en plusieurs étapes. "
@@ -20,6 +20,9 @@ DEFS = [
     {"type":"function","function":{"name":"read_file","description":"Lire un fichier du workspace","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":False}}},
     {"type":"function","function":{"name":"write_file","description":"Créer ou remplacer un fichier dans workspace","parameters":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":False}}},
     {"type":"function","function":{"name":"run_python","description":"Exécuter un script Python existant du workspace, timeout 15 secondes","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":False}}},
+    {"type":"function","function":{"name":"start_process","description":"Démarrer un script Python du workspace comme processus géré par Automaton","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":False}}},
+    {"type":"function","function":{"name":"list_processes","description":"Lister les processus démarrés et suivis par Automaton","parameters":{"type":"object","properties":{},"additionalProperties":False}}},
+    {"type":"function","function":{"name":"stop_process","description":"Arrêter un processus géré par Automaton via son identifiant","parameters":{"type":"object","properties":{"process_id":{"type":"integer"}},"required":["process_id"],"additionalProperties":False}}},
     {"type":"function","function":{"name":"recall_memories","description":"Rechercher des souvenirs persistants utiles","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":False}}},
     {"type":"function","function":{"name":"remember","description":"Enregistrer un fait utile pour les prochaines sessions","parameters":{"type":"object","properties":{"content":{"type":"string"},"tags":{"type":"string"},"importance":{"type":"integer","minimum":1,"maximum":5}},"required":["content"],"additionalProperties":False}}},
 ]
@@ -28,6 +31,9 @@ CALLS = {
     "read_file": lambda a: tools.read_file(**a),
     "write_file": lambda a: tools.write_file(**a),
     "run_python": lambda a: tools.run_python(**a),
+    "start_process": lambda a: processes.start(a["path"]),
+    "list_processes": lambda a: processes.list_processes(),
+    "stop_process": lambda a: processes.stop(a["process_id"]),
     "recall_memories": lambda a: memory.recall(a.get("query", ""), 10),
     "remember": lambda a: memory.remember(a["content"], a.get("tags", ""), a.get("importance", 3)),
 }
