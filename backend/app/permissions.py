@@ -54,8 +54,6 @@ def init():
             BEFORE UPDATE ON permission_audit BEGIN SELECT RAISE(ABORT,'audit log is append-only'); END""")
         conn.execute("""CREATE TRIGGER IF NOT EXISTS permission_audit_no_delete
             BEFORE DELETE ON permission_audit BEGIN SELECT RAISE(ABORT,'audit log is append-only'); END""")
-        conn.execute("""UPDATE permission_requests SET status='expired'
-            WHERE status='pending' AND expires_at <= ?""", (_now(),))
 
 
 def _now():
@@ -81,7 +79,7 @@ def _result_summary(result):
         raw = result.encode("utf-8", errors="replace")
         return json.dumps({"type": "text", "length": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
     if isinstance(result, dict):
-        safe = {key: result[key] for key in ("status", "returncode", "id", "error") if key in result and isinstance(result[key], (str, int, float, bool))}
+        safe = {key: result[key] for key in ("status", "returncode", "id") if key in result and isinstance(result[key], (str, int, float, bool))}
         return json.dumps({"type": "object", "keys": sorted(result.keys()), "metadata": safe}, ensure_ascii=False)[:1000]
     return json.dumps({"type": type(result).__name__, "value": result if isinstance(result, (int, float, bool)) or result is None else None})
 
@@ -133,7 +131,7 @@ def dispatch(tool, arguments, executor):
         return _request(tool, arguments, summary)
     try:
         result = executor(tool, arguments)
-        _audit("tool_call", tool, summary, "allowed", "agent", str(result)[:1000])
+        _audit("tool_call", tool, summary, "allowed", "agent", result)
         return result
     except Exception as exc:
         _audit("tool_call", tool, summary, "error", "agent", _result_summary({"error_type": type(exc).__name__})[:1000])
@@ -142,10 +140,14 @@ def dispatch(tool, arguments, executor):
 
 def list_requests(limit=50):
     with db.connect() as conn:
+        expired_rows = conn.execute("""SELECT id,tool,arguments_summary FROM permission_requests
+            WHERE status='pending' AND expires_at <= ?""", (_now(),)).fetchall()
         conn.execute("""UPDATE permission_requests SET status='expired'
             WHERE status='pending' AND expires_at <= ?""", (_now(),))
         rows = conn.execute("SELECT id,tool,arguments_summary,status,expires_at,created_at,decided_at,result_summary FROM permission_requests ORDER BY id DESC LIMIT ?",
                             (max(1, min(int(limit), 200)),)).fetchall()
+    for row in expired_rows:
+        _audit("approval_expired", row["tool"], row["arguments_summary"], "expired", "system", "Délai d’approbation dépassé")
     return [dict(row) for row in rows]
 
 
@@ -157,6 +159,7 @@ def decide(request_id, approve, executor, actor="user"):
             raise KeyError("Demande d'approbation introuvable.")
         if row["status"] != "pending":
             raise ValueError("Cette demande n'est plus en attente.")
+        tool, summary = row["tool"], row["arguments_summary"]
         if row["expires_at"] <= _now():
             conn.execute("UPDATE permission_requests SET status='expired',decided_at=CURRENT_TIMESTAMP WHERE id=?", (request_id,))
             expired = True
@@ -166,6 +169,7 @@ def decide(request_id, approve, executor, actor="user"):
             conn.execute("UPDATE permission_requests SET status=? ,decided_at=CURRENT_TIMESTAMP WHERE id=?",
                          ("approved" if approve else "denied", request_id))
     if expired:
+        _audit("approval_expired", tool, summary, "expired", "system", "Délai d’approbation dépassé")
         raise ValueError("Cette demande a expiré.")
     if not approve:
         _audit("approval_decision", tool, summary, "denied", actor, "Refus humain")
