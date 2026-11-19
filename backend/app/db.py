@@ -128,7 +128,8 @@ def finish_task(task_id, status, result="", error=""):
     if status not in {"queued", "succeeded", "failed"}:
         raise ValueError("Invalid task status")
     with connect() as c:
-        c.execute("""UPDATE tasks SET status=?, result=?, error=?, updated_at=CURRENT_TIMESTAMP,\n                     started_at=CASE WHEN ?='queued' THEN NULL ELSE started_at END,
+        c.execute("""UPDATE tasks SET status=?, result=?, error=?, updated_at=CURRENT_TIMESTAMP,
+                     started_at=CASE WHEN ?='queued' THEN NULL ELSE started_at END,
                      finished_at=CASE WHEN ? IN ('succeeded','failed') THEN CURRENT_TIMESTAMP ELSE NULL END
                      WHERE id=?""", (status, result[:12000], error[:4000], status, status, task_id))
 
