@@ -164,7 +164,7 @@ def create_objective(title, description, steps, priority=3, due_at=None):
         for position, step in enumerate(steps, 1):
             c.execute("""INSERT INTO objective_steps(objective_id,position,title,description)
                          VALUES(?,?,?,?)""", (objective_id, position, step["title"], step["description"]))
-        return get_objective(objective_id)
+    return get_objective(objective_id)
 
 def list_objectives(limit=50):
     with connect() as c:
