@@ -54,14 +54,15 @@ def save_appended_plan(objective_id, steps):
     with db.connect() as conn:
         rows = conn.execute("SELECT id,position FROM objective_steps WHERE objective_id=? ORDER BY position",
                             (objective_id,)).fetchall()
+        pending = list(steps)
         for row in rows:
             existing = conn.execute("SELECT 1 FROM objective_step_verification WHERE step_id=?", (row["id"],)).fetchone()
             if existing:
                 continue
-            check_index = row["position"] - (len(rows) - len(steps)) - 1
-            if 0 <= check_index < len(steps):
+            if pending:
+                candidate = pending.pop(0)
                 conn.execute("INSERT INTO objective_step_verification(step_id,checks_json) VALUES(?,?)",
-                             (row["id"], json.dumps(steps[check_index]["checks"], ensure_ascii=False)))
+                             (row["id"], json.dumps(candidate["checks"], ensure_ascii=False)))
 
 
 def verify_task(task_id, agent_result):
@@ -76,9 +77,15 @@ def verify_task(task_id, agent_result):
         evidence = {"success": False, "error": "Aucun critère d'acceptation enregistré : réussite refusée."}
     else:
         checks = json.loads(row["checks_json"])
+        trace = (agent_result.get("tool_trace") or [])[-30:]
+        mutations = [item for item in trace if item.get("success") and item.get("tool") in {"write_file", "run_python"}]
         evidence = workspace_verification.verify_workspace(checks)
-        evidence["tool_trace"] = (agent_result.get("tool_trace") or [])[-30:]
+        evidence["tool_trace"] = trace
         evidence["agent_answer"] = str(agent_result.get("answer", ""))[:3000]
+        evidence["action_confirmed"] = bool(mutations)
+        if not mutations:
+            evidence["success"] = False
+            evidence["error"] = "Aucune action de production confirmée (write_file ou run_python)."
     with db.connect() as conn:
         conn.execute("""UPDATE objective_step_verification SET evidence_json=?, verified_at=CURRENT_TIMESTAMP
             WHERE step_id=?""", (json.dumps(evidence, ensure_ascii=False), row["id"]))
