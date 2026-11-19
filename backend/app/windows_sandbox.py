@@ -104,7 +104,7 @@ def start(script, output_dir):
         )
     runner = (
         "$ErrorActionPreference = 'Continue'\n"
-        f"{invocation} *> {_powershell_literal(str(Path(SANDBOX_OUTPUT) / 'process.log'))}\n"
+        f"{invocation} 2>&1 | Out-File -FilePath {_powershell_literal(str(Path(SANDBOX_OUTPUT) / 'process.log'))} -Encoding utf8\n"
         "$code = $LASTEXITCODE\n"
         f"Set-Content -LiteralPath {_powershell_literal(str(Path(SANDBOX_OUTPUT) / 'exit-code.txt'))} "
         "-Value $code -NoNewline\n"
