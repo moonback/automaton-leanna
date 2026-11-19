@@ -22,6 +22,9 @@ class WindowsSandboxConfigTests(unittest.TestCase):
             values = {child.tag: child.text for child in xml if child.tag != "MappedFolders"}
             self.assertEqual(values["Networking"], "Disable")
             self.assertEqual(values["ClipboardRedirection"], "Disable")
+            self.assertEqual(values["AudioInput"], "Disable")
+            self.assertEqual(values["VideoInput"], "Disable")
+            self.assertEqual(values["PrinterRedirection"], "Disable")
             self.assertEqual(values["vGPU"], "Disable")
             self.assertEqual(values["ProtectedClient"], "Enable")
             mappings = xml.find("MappedFolders").findall("MappedFolder")
