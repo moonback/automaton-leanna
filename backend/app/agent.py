@@ -51,11 +51,11 @@ async def run_agent(prompt: str):
         )
 
     remembered = db.search_memories("", 5)
-    memory_context = "\\n".join(
+    memory_context = "\n".join(
         f"- [importance {item['importance']}] {item['content']} (tags: {item['tags']})"
         for item in remembered
     ) or "Aucun souvenir enregistré."
-    system = SYSTEM + "\\n\\nSouvenirs persistants disponibles :\\n" + memory_context
+    system = SYSTEM + "\n\nSouvenirs persistants disponibles :\n" + memory_context
     messages = [{"role":"system","content":system}] + db.history(16) + [{"role":"user","content":prompt}]
     db.save("user", prompt)
     tool_trace = []
