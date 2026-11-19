@@ -292,7 +292,7 @@ export default function App() {
               {goal.status==='paused' && <button className="secondary" onClick={()=>void changeObjectiveStatus(goal.id,'active')}>Reprendre</button>}
               {(goal.status==='active'||goal.status==='paused') && <button className="dangericon" onClick={()=>void changeObjectiveStatus(goal.id,'cancelled')}>Annuler</button>}
             </div>
-            {objectiveRevisions[goal.id]?.map(revision=><div className="revisionrow" key={revision.id}><b>Plan v{revision.revision} · {revision.reason}</b><small>{revision.created_at}</small><pre>{JSON.parse(revision.plan_json).map((step:{title:string;description:string},index:number)=>`${index+1}. ${step.title} — ${step.description}`).join('\\n')}</pre></div>)}
+            {objectiveRevisions[goal.id]?.map(revision=><div className="revisionrow" key={revision.id}><b>Plan v{revision.revision} · {revision.reason}</b><small>{revision.created_at}</small><pre>{JSON.parse(revision.plan_json).map((step:{title:string;description:string},index:number)=>`${index+1}. ${step.title} — ${step.description}`).join('\n')}</pre></div>)}
             {objectiveEvents[goal.id]?.map(event=><div className="runrow" key={event.id}><span className="statuspill">{event.event_type}</span><div><b>{event.message}</b><small>{event.created_at}</small></div></div>)}
             {goal.steps?.map(step=><div className="runrow" key={step.id}><span className={`statuspill ${step.status}`}>{step.status}</span><div><b>{step.position}. {step.title}</b><small>{step.description}</small>{step.result && <small>Résultat : {step.result}</small>}{step.error && <small className="taskerror">{step.error}</small>}</div>{step.status==='failed' && <button className="secondary" onClick={()=>void retryObjectiveStep(goal.id,step.id)}>Relancer</button>}</div>)}
           </article>) : <p className="empty">Aucun objectif défini.</p>}
@@ -345,7 +345,7 @@ export default function App() {
         {page === 'improvements' && <section className="panel">
           <div className="panelintro"><GitBranch /><div><h2>Application de patch Git</h2><p>Le moteur applique un diff unifié au backend local, compile le code et annule le patch si la compilation échoue.</p></div></div>
           <div className="warning"><ShieldCheck size={17} /><span>Fonction désactivée par défaut. Elle exige AUTO_IMPROVE_ENABLED=true, un dépôt Git propre et un patch limité à backend/app/. Le patch appliqué n’est pas automatiquement commité.</span></div>
-          <label>Patch unifié<textarea className="patcharea" rows={15} value={patch} onChange={e => setPatch(e.target.value)} placeholder={'diff --git a/backend/app/... b/backend/app/...\\n--- a/backend/app/...\\n+++ b/backend/app/...'} /></label>
+          <label>Patch unifié<textarea className="patcharea" rows={15} value={patch} onChange={e => setPatch(e.target.value)} placeholder={'diff --git a/backend/app/... b/backend/app/...\n--- a/backend/app/...\n+++ b/backend/app/...'} /></label>
           <button className="primary" disabled={busy || !patch.trim()} onClick={() => void applyPatch()}><GitBranch size={15} /> {busy ? 'Validation…' : 'Valider et appliquer le patch'}</button>
         </section>}
         <footer><Zap size={13} /> Automaton · Exécution locale · Clés API conservées côté backend</footer>
