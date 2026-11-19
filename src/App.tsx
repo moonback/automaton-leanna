@@ -18,7 +18,8 @@ type ResourceSnapshot = {
 };
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
-type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string };\ntype Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
+type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string };
+type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -59,7 +60,10 @@ export default function App() {
   const [importance, setImportance] = useState(3);
   const [heartbeat, setHeartbeat] = useState<HeartbeatConfig | null>(null);
   const [heartbeatRuns, setHeartbeatRuns] = useState<HeartbeatRun[]>([]);
-  const [resources, setResources] = useState<ResourceSnapshot | null>(null);\n  const [managedProcesses, setManagedProcesses] = useState<ManagedProcess[]>([]);\n  const [processScript, setProcessScript] = useState('');\n  const [processLogs, setProcessLogs] = useState<Record<number,string>>({});
+  const [resources, setResources] = useState<ResourceSnapshot | null>(null);
+  const [managedProcesses, setManagedProcesses] = useState<ManagedProcess[]>([]);
+  const [processScript, setProcessScript] = useState('');
+  const [processLogs, setProcessLogs] = useState<Record<number,string>>({});
   const [teamTask, setTeamTask] = useState('');
   const [teamResult, setTeamResult] = useState<AgentResult | null>(null);
   const [patch, setPatch] = useState('');
@@ -87,7 +91,11 @@ export default function App() {
     const data = await request<{ memories: Memory[] }>('/memory');
     setMemories(data.memories);
   }
-  async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }\n  async function refreshProcesses() { const data=await request<{processes:ManagedProcess[]}>('/processes'); setManagedProcesses(data.processes); }\n  async function startManagedProcess() { if(!processScript.trim()) return; try { await request('/processes',{method:'POST',body:JSON.stringify({path:processScript.trim()})}); setProcessScript(''); await refreshProcesses(); setNotice('Processus démarré.'); } catch(e) { setError(e instanceof Error?e.message:'Démarrage impossible'); } }\n  async function stopManagedProcess(id:number) { try { await request('/processes/'+id,{method:'DELETE'}); await refreshProcesses(); } catch(e) { setError(e instanceof Error?e.message:'Arrêt impossible'); } }\n  async function loadProcessLog(id:number) { try { const data=await request<{log:string}>('/processes/'+id+'/logs'); setProcessLogs(current=>({...current,[id]:data.log})); } catch(e) { setError(e instanceof Error?e.message:'Logs indisponibles'); } }
+  async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
+  async function refreshProcesses() { const data=await request<{processes:ManagedProcess[]}>('/processes'); setManagedProcesses(data.processes); }
+  async function startManagedProcess() { if(!processScript.trim()) return; try { await request('/processes',{method:'POST',body:JSON.stringify({path:processScript.trim()})}); setProcessScript(''); await refreshProcesses(); setNotice('Processus démarré.'); } catch(e) { setError(e instanceof Error?e.message:'Démarrage impossible'); } }
+  async function stopManagedProcess(id:number) { try { await request('/processes/'+id,{method:'DELETE'}); await refreshProcesses(); } catch(e) { setError(e instanceof Error?e.message:'Arrêt impossible'); } }
+  async function loadProcessLog(id:number) { try { const data=await request<{log:string}>('/processes/'+id+'/logs'); setProcessLogs(current=>({...current,[id]:data.log})); } catch(e) { setError(e instanceof Error?e.message:'Logs indisponibles'); } }
   async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
   async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); const details = await Promise.all(data.objectives.map(item => request<Objective>(`/objectives/${item.id}`))); setObjectives(details); }
   async function refreshAll() {
