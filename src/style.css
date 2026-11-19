@@ -34,3 +34,9 @@
 .revisionrow b { display:block; color:#b9d8f1; font-size:11px; }
 .revisionrow small { display:block; margin-top:4px; color:#78899f; font-size:10px; }
 .revisionrow pre { max-height:180px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; color:#aebdd0; font:10px/1.6 Consolas,monospace; }
+
+.processmeta { display:block; color:#7f91a8; font-size:10px; overflow-wrap:anywhere; }
+.processlogs { margin-top:18px; border-top:1px solid #29394f; padding-top:8px; }
+.processlogs pre { max-height:360px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:#09111c; color:#c5d5e7; border:1px solid #29394f; border-radius:9px; padding:14px; font:10px/1.6 Consolas,monospace; }
+.statuspill.interrupted { background:#3c2f25; color:#e7bd88; }
+.statuspill.orphaned { background:#3c2f25; color:#e7bd88; }
