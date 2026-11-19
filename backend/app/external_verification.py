@@ -52,7 +52,11 @@ def normalize_checks(checks):
             expected = check.get("expected_status", 200)
             if isinstance(expected, bool) or not isinstance(expected, int) or not 100 <= expected <= 599:
                 raise ValueError("expected_status doit être un code HTTP entre 100 et 599.")
-            normalized.append({"kind": kind, "url": url, "expected_status": expected})
+            must_transition = check.get("must_transition", False)
+            if not isinstance(must_transition, bool):
+                raise ValueError("must_transition doit être booléen.")
+            normalized.append({"kind": kind, "url": url, "expected_status": expected,
+                               "must_transition": must_transition})
         elif kind == "tcp_port_open":
             host = check.get("host", "127.0.0.1")
             port = check.get("port")
@@ -63,7 +67,11 @@ def normalize_checks(checks):
                 raise ValueError("port doit être un entier entre 1 et 65535.")
             if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int) or not 100 <= timeout_ms <= 2000:
                 raise ValueError("timeout_ms doit être compris entre 100 et 2000.")
-            normalized.append({"kind": kind, "host": host, "port": port, "timeout_ms": timeout_ms})
+            must_transition = check.get("must_transition", False)
+            if not isinstance(must_transition, bool):
+                raise ValueError("must_transition doit être booléen.")
+            normalized.append({"kind": kind, "host": host, "port": port, "timeout_ms": timeout_ms,
+                               "must_transition": must_transition})
         else:
             raise ValueError(f"Type de contrôle externe non autorisé : {kind}")
     return normalized
@@ -90,9 +98,12 @@ def verify_external_checks(checks):
                     timeout=check["timeout_ms"] / 1000,
                 ):
                     pass
+                item["observed_open"] = True
                 item["passed"] = True
                 item["message"] = "Port TCP local accessible."
         except (httpx.HTTPError, OSError, ValueError) as exc:
+            if check["kind"] == "tcp_port_open":
+                item["observed_open"] = False
             item["message"] = f"Contrôle externe impossible : {str(exc)[:500]}"
         results.append(item)
     passed = sum(1 for item in results if item["passed"])
