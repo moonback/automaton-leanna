@@ -67,3 +67,12 @@ The agent's file tools are restricted to `backend/workspace/`; Python script exe
 - Tests unitaires standard-library : `cd backend && python -m unittest discover -s tests -v`.
 - GitHub Actions exécute les tests backend sur Ubuntu et Windows, puis construit l'interface avec `npm ci && npm run build`.
 - Limite importante : cette première version fournit des contrôles déterministes sur les artefacts du workspace. Elle ne certifie pas encore automatiquement les effets externes (réseau, processus, services) et ne remplace pas les critères d'acceptation propres à chaque objectif.
+
+
+## Vérification des étapes d'objectifs (0.9.0)
+- Chaque nouvelle étape doit inclure au moins un critère d'acceptation déterministe (exists, contains ou python_syntax) sur un fichier du workspace.
+- Les critères sont validés avant l'enregistrement du plan et conservés en SQLite. Les plans correctifs doivent fournir les mêmes critères.
+- Une étape d'objectif ne passe à succeeded que si l'agent a réellement exécuté un outil de production (write_file ou run_python) et si tous les contrôles du workspace passent ensuite.
+- La trace des appels d'outils, la réponse de l'agent et les résultats des contrôles sont archivés dans les événements de l'objectif. Une étape sans critères ou sans action confirmée échoue par défaut.
+- Les tâches génériques hors objectifs conservent leur comportement précédent. Les objectifs déjà présents avant cette version n'ont pas de critères migrés automatiquement : leurs prochaines étapes échoueront en validation tant qu'elles ne sont pas replanifiées avec des critères.
+- Cette validation porte sur les artefacts du workspace ; elle ne certifie pas les effets externes (services, réseau, processus distants).
