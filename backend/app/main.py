@@ -171,6 +171,42 @@ def process_stop(process_id: int):
         raise HTTPException(status_code=409, detail="Ce processus n'est plus contrôlable depuis cette session backend.")
     return record
 
+
+@app.get("/permissions")
+def permission_config():
+    return permissions.get_config()
+
+
+@app.put("/permissions/profile")
+def permission_profile_update(req: PermissionProfileRequest):
+    try:
+        return permissions.set_profile(req.profile)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/permissions/requests")
+def permission_requests(limit: int = 50):
+    return {"requests": permissions.list_requests(limit)}
+
+
+@app.post("/permissions/requests/{request_id}/decision")
+def permission_request_decision(request_id: int, req: PermissionDecisionRequest):
+    try:
+        return permissions.decide(request_id, req.approve, agent.execute_tool)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.get("/permissions/audit")
+def permission_audit(limit: int = 100):
+    return {"events": permissions.list_audit(limit)}
+
+
 @app.get("/resources")
 def resource_snapshot():
     return resources.snapshot()
