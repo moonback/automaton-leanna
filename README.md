@@ -76,3 +76,16 @@ The agent's file tools are restricted to `backend/workspace/`; Python script exe
 - La trace des appels d'outils, la réponse de l'agent et les résultats des contrôles sont archivés dans les événements de l'objectif. Une étape sans critères ou sans action confirmée échoue par défaut.
 - Les tâches génériques hors objectifs conservent leur comportement précédent. Les objectifs déjà présents avant cette version n'ont pas de critères migrés automatiquement : leurs prochaines étapes échoueront en validation tant qu'elles ne sont pas replanifiées avec des critères.
 - Cette validation porte sur les artefacts du workspace ; elle ne certifie pas les effets externes (services, réseau, processus distants).
+
+
+## Vérification des effets externes locaux (1.0.0)
+Les étapes d'objectif peuvent désormais vérifier des services locaux après une action :
+- `http_status` : effectue un GET HTTP sans suivre les redirections et compare le code observé au code attendu.
+- `tcp_port_open` : vérifie qu'un port TCP local accepte une connexion.
+- Les sondes sont strictement limitées à `localhost`, `127.0.0.1` et `::1`. Aucun hôte du réseau local ou d'Internet n'est accepté, afin de limiter les risques SSRF.
+- Les requêtes HTTP utilisent un délai court, désactivent les proxys d'environnement et n'envoient aucune donnée d'authentification.
+- Les preuves externes sont regroupées avec les contrôles workspace dans l'événement de vérification de l'étape.
+- API manuelle : `POST /verification/external` avec `{"checks":[{"kind":"http_status","url":"http://127.0.0.1:8000/health","expected_status":200}]}`. Les exécutions sont conservées dans `GET /verification/history`.
+- Tests dédiés : `python -m unittest discover -s tests -v`.
+
+Limites : ces sondes prouvent uniquement qu'un service local répond ou qu'un port accepte une connexion au moment du contrôle. Elles ne prouvent ni l'identité du processus, ni sa stabilité dans le temps, ni la disponibilité depuis un autre appareil. Les effets distants et les actions réseau avec mutation restent désactivés.
