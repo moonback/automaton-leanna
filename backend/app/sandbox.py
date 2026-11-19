@@ -31,7 +31,7 @@ def resolve_script(relative_path):
     return candidate
 
 
-def _limits():
+def _limits(cpu_seconds=MAX_TIMEOUT):
     if os.name == "nt":
         return None
     try:
@@ -40,7 +40,7 @@ def _limits():
         return None
 
     def apply():
-        resource.setrlimit(resource.RLIMIT_CPU, (MAX_TIMEOUT, MAX_TIMEOUT + 1))
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
         resource.setrlimit(resource.RLIMIT_FSIZE, (10 * 1024 * 1024, 10 * 1024 * 1024))
         resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
         resource.setrlimit(resource.RLIMIT_AS, (MAX_MEMORY_BYTES, MAX_MEMORY_BYTES))
