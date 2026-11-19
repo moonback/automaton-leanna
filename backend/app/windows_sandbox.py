@@ -52,6 +52,9 @@ def _write_config(config_path, workspace, runtime, output, venv=None):
     ET.SubElement(root, "vGPU").text = "Disable"
     ET.SubElement(root, "Networking").text = "Disable"
     ET.SubElement(root, "ClipboardRedirection").text = "Disable"
+    ET.SubElement(root, "AudioInput").text = "Disable"
+    ET.SubElement(root, "VideoInput").text = "Disable"
+    ET.SubElement(root, "PrinterRedirection").text = "Disable"
     ET.SubElement(root, "ProtectedClient").text = "Enable"
     ET.SubElement(root, "MemoryInMB").text = "2048"
     folders = ET.SubElement(root, "MappedFolders")
@@ -92,11 +95,12 @@ def start(script, output_dir):
     guest_log = str(Path(SANDBOX_OUTPUT) / "process.log")
     guest_exit = str(Path(SANDBOX_OUTPUT) / "exit-code.txt")
     runner_source = f"""
-import runpy, site, sys, traceback
+import os, runpy, site, sys, traceback
 script_path = {script_guest!r}
 log_path = {guest_log!r}
 exit_path = {guest_exit!r}
 site_packages = {guest_site!r}
+os.chdir({SANDBOX_OUTPUT!r})
 if site_packages:
     site.addsitedir(site_packages)
 class LimitedWriter:
