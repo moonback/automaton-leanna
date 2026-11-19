@@ -9,7 +9,7 @@ from . import db
 PROFILES = {
     "observe_only": {"list_files", "read_file", "list_processes", "recall_memories"},
     "workspace_write": {"list_files", "read_file", "list_processes", "recall_memories", "write_file", "remember"},
-    "sandbox_execution": {"list_files", "read_file", "list_processes", "recall_memories", "write_file", "remember", "start_process"},
+    "sandbox_execution": {"list_files", "read_file", "list_processes", "recall_memories", "write_file", "remember", "start_process", "stop_process"},
     "admin": {"*"},
 }
 SENSITIVE_TOOLS = {"run_python", "start_process", "stop_process"}
