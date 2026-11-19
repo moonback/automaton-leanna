@@ -57,6 +57,9 @@ def safe_environment():
 
 
 def run_script(relative_path, timeout=DEFAULT_TIMEOUT):
+    import signal
+    import threading
+
     script = resolve_script(relative_path)
     if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= MAX_TIMEOUT:
         raise ValueError(f"timeout doit être compris entre 1 et {MAX_TIMEOUT} secondes.")
@@ -64,11 +67,8 @@ def run_script(relative_path, timeout=DEFAULT_TIMEOUT):
     kwargs = {
         "cwd": str(WORKSPACE),
         "env": safe_environment(),
-        "capture_output": True,
-        "text": True,
-        "encoding": "utf-8",
-        "errors": "replace",
-        "timeout": timeout,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
         "shell": False,
     }
     if os.name == "nt":
@@ -76,22 +76,47 @@ def run_script(relative_path, timeout=DEFAULT_TIMEOUT):
     else:
         kwargs["start_new_session"] = True
         kwargs["preexec_fn"] = _limits()
+
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+
+    def drain(stream, key):
+        while True:
+            chunk = stream.read(4096)
+            if not chunk:
+                break
+            captured[key].extend(chunk)
+            if len(captured[key]) > MAX_OUTPUT_CHARS * 4:
+                del captured[key][:-MAX_OUTPUT_CHARS * 4]
+
+    process = subprocess.Popen(command, **kwargs)
+    readers = [
+        threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
+        threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+    timed_out = False
     try:
-        result = subprocess.run(command, **kwargs)
-        return {
-            "returncode": result.returncode,
-            "stdout": result.stdout[-MAX_OUTPUT_CHARS:],
-            "stderr": result.stderr[-MAX_OUTPUT_CHARS:],
-            "timed_out": False,
-            "execution_profile": "restricted_subprocess",
-            "isolation_guarantee": "resource_limits_only",
-        }
-    except subprocess.TimeoutExpired as exc:
-        return {
-            "returncode": -1,
-            "stdout": (exc.stdout or "")[-MAX_OUTPUT_CHARS:] if isinstance(exc.stdout, str) else "",
-            "stderr": (exc.stderr or "")[-MAX_OUTPUT_CHARS:] if isinstance(exc.stderr, str) else "",
-            "timed_out": True,
-            "execution_profile": "restricted_subprocess",
-            "isolation_guarantee": "resource_limits_only",
-        }
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                               capture_output=True, timeout=5, check=False)
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, subprocess.TimeoutExpired):
+            process.kill()
+        process.wait()
+    for reader in readers:
+        reader.join(timeout=2)
+
+    return {
+        "returncode": process.returncode if not timed_out else -1,
+        "stdout": bytes(captured["stdout"])[-MAX_OUTPUT_CHARS:].decode("utf-8", errors="replace"),
+        "stderr": bytes(captured["stderr"])[-MAX_OUTPUT_CHARS:].decode("utf-8", errors="replace"),
+        "timed_out": timed_out,
+        "execution_profile": "restricted_subprocess",
+        "isolation_guarantee": "resource_limits_only",
+    }
