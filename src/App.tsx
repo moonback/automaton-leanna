@@ -1,9 +1,9 @@
-import { Component, lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Activity, Bot, Brain, Cpu, FileText, Folder, Gauge, GitBranch, ListTodo, Play, RefreshCw, RotateCcw, Search, Target,
   Send, ShieldCheck, Trash2, Users, X, Zap
 } from 'lucide-react';
-import type { SatelliteKind } from './Scene3D';
+import type { SatelliteKind, SceneEventKind } from './Scene3D';
 
 // Three.js is ~700 kB: load it after the UI so the first paint is not blocked.
 const Scene3D = lazy(() => import('./Scene3D'));
@@ -18,7 +18,7 @@ class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean
 const API = 'http://127.0.0.1:8765';
 type ToolStep = { tool: string; arguments?: Record<string, unknown>; success: boolean; error?: string };
 type Message = { role: 'user' | 'assistant'; content: string; trace?: ToolStep[] };
-type Summary = { tasks_queued: number; tasks_running: number; tasks_failed: number; objectives_active: number; processes_running: number };
+type Summary = { tasks_queued: number; tasks_running: number; tasks_failed: number; tasks_succeeded: number; objectives_active: number; processes_running: number };
 type TaskFilter = 'all' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 const HISTORY_SAMPLES = 60;
 
@@ -107,6 +107,17 @@ export default function App() {
   const [memoryQuery, setMemoryQuery] = useState('');
   const [samples, setSamples] = useState<{ cpu: number[]; memory: number[] }>({ cpu: [], memory: [] });
   const [patchDiff, setPatchDiff] = useState('');
+  const [sceneEvent, setSceneEvent] = useState<{ seq: number; kind: SceneEventKind } | null>(null);
+  const fireSceneEvent = (kind: SceneEventKind) => setSceneEvent(current => ({ seq: (current?.seq ?? 0) + 1, kind }));
+  const previousSummary = useRef<Summary | null>(null);
+  // Task results show up as counter increases between two polls.
+  useEffect(() => {
+    const before = previousSummary.current;
+    previousSummary.current = summary;
+    if (!before || !summary) return;
+    if (summary.tasks_failed > before.tasks_failed) fireSceneEvent('failure');
+    else if (summary.tasks_succeeded > before.tasks_succeeded) fireSceneEvent('success');
+  }, [summary]);
 
   async function refreshBase() {
     try {
@@ -188,9 +199,11 @@ export default function App() {
     try {
       const data = await request<{ answer: string; tool_trace?: ToolStep[] }>('/agent/run', { method: 'POST', body: JSON.stringify({ prompt: value }) });
       setMessages(current => [...current, { role: 'assistant', content: data.answer || 'Tâche terminée.', trace: data.tool_trace }]);
+      fireSceneEvent('reply');
       void refreshBase();
     } catch (e) {
       setMessages(current => [...current, { role: 'assistant', content: `Erreur : ${e instanceof Error ? e.message : 'Erreur inconnue'}` }]);
+      fireSceneEvent('failure');
     } finally { setBusy(false); }
   }
   async function enqueueTask() {
@@ -352,8 +365,9 @@ export default function App() {
       ...Array<SatelliteKind>(Math.min(processesRunning, 8)).fill('process'),
       ...Array<SatelliteKind>(Math.min(queuedWork, 8)).fill('task'),
       ...Array<SatelliteKind>(Math.min(objectivesActive, 8)).fill('objective')
-    ]
-  }), [page, busy, connected, satelliteKey, summary?.tasks_running]);
+    ],
+    event: sceneEvent
+  }), [page, busy, connected, satelliteKey, summary?.tasks_running, sceneEvent]);
   const badges: Partial<Record<Page, number>> = { tasks: queuedWork, objectives: objectivesActive, processes: processesRunning };
   const coreLine = !connected ? 'Backend injoignable' : busy ? 'Automaton travaille' : queuedWork ? 'Automaton traite la file' : 'Automaton est en veille';
   const taskCounts = tasks.reduce<Record<string, number>>((acc, task) => ({ ...acc, [task.status]: (acc[task.status] ?? 0) + 1 }), {});

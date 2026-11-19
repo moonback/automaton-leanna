@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "projectId": "automaton_g6xymc",
+  "projectName": "automaton",
+  "detected": {
+    "packageManager": "npm",
+    "frameworks": [
+      "electron",
+      "react",
+      "vite"
+    ],
+    "languages": [
+      "typescript"
+    ],
+    "commands": {
+      "build": "npm run build",
+      "dev": "npm run dev"
+    },
+    "hasTests": false,
+    "hasTsConfig": true,
+    "isGit": true
+  },
+  "strategies": {
+    "effective": [],
+    "failing": [],
+    "playbooks": []
+  },
+  "knowledge": {
+    "totalFacts": 0,
+    "byCategory": {},
+    "conventions": [],
+    "architecture": []
+  },
+  "preferences": {},
+  "missionStats": {
+    "completed": 0,
+    "failed": 0
+  },
+  "createdAt": "2026-11-19T20:32:53.033Z",
+  "updatedAt": "2026-11-19T20:32:53.805Z"
+}

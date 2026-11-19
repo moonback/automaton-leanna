@@ -203,7 +203,8 @@ def summary():
         objectives = c.execute("SELECT COUNT(*) FROM objectives WHERE status='active'").fetchone()[0]
         processes = c.execute("SELECT COUNT(*) FROM managed_processes WHERE status IN ('running','stopping')").fetchone()[0]
     return {"tasks_queued": tasks.get("queued", 0), "tasks_running": tasks.get("running", 0),
-            "tasks_failed": tasks.get("failed", 0), "objectives_active": objectives,
+            "tasks_failed": tasks.get("failed", 0), "tasks_succeeded": tasks.get("succeeded", 0),
+            "objectives_active": objectives,
             "processes_running": processes}
 
 

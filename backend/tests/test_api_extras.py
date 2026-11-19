@@ -40,9 +40,12 @@ class ApiExtrasTests(unittest.TestCase):
     def test_summary_counts(self):
         db.create_task("a")
         db.create_task("b")
+        claimed = db.claim_task()
+        db.finish_task(claimed["id"], "succeeded")
         db.claim_task()
+        db.create_task("c")
         summary = self.client.get("/summary").json()
-        self.assertEqual((summary["tasks_queued"], summary["tasks_running"]), (1, 1))
+        self.assertEqual((summary["tasks_queued"], summary["tasks_running"], summary["tasks_succeeded"]), (1, 1, 1))
         self.assertEqual(summary["processes_running"], 0)
 
 
