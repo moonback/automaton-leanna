@@ -1,5 +1,5 @@
-import subprocess,sys
 from .config import WORKSPACE
+from . import sandbox
 def safe_path(relative:str):
  p=(WORKSPACE/relative).resolve()
  if p!=WORKSPACE and WORKSPACE not in p.parents:raise ValueError("Chemin refusé : accès limité au workspace.")
@@ -16,7 +16,4 @@ def write_file(path:str,content:str):
  if len(content.encode("utf-8"))>200000:raise ValueError("Contenu trop volumineux.")
  p.write_text(content,encoding="utf-8");return f"Fichier écrit : {p.relative_to(WORKSPACE)}"
 def run_python(path:str):
- p=safe_path(path)
- if not p.is_file() or p.suffix.lower()!=".py":raise ValueError("Seuls les scripts .py existants du workspace sont exécutables.")
- r=subprocess.run([sys.executable,str(p)],cwd=WORKSPACE,capture_output=True,text=True,timeout=15,shell=False)
- return {"returncode":r.returncode,"stdout":r.stdout[-8000:],"stderr":r.stderr[-8000:]}
+ return sandbox.run_script(path)
