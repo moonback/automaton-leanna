@@ -82,6 +82,9 @@ def init():
             id INTEGER PRIMARY KEY, status TEXT NOT NULL, summary TEXT NOT NULL DEFAULT '',
             error TEXT NOT NULL DEFAULT '', started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             finished_at DATETIME)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS verification_runs(
+            id INTEGER PRIMARY KEY, checks_json TEXT NOT NULL, result_json TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP)""")
 
 def save(role, content):
     with connect() as c:
@@ -358,3 +361,18 @@ def objective_history(objective_id):
         revisions=c.execute("SELECT id,revision,reason,plan_json,created_at FROM objective_revisions WHERE objective_id=? ORDER BY revision DESC",(objective_id,)).fetchall()
     return {"events":[dict(row) for row in events],"revisions":[dict(row) for row in revisions]}
 
+
+
+def record_verification_run(checks, result):
+    with connect() as c:
+        cur=c.execute("INSERT INTO verification_runs(checks_json,result_json) VALUES(?,?)",
+                      (json.dumps(checks,ensure_ascii=False),json.dumps(result,ensure_ascii=False)))
+        return cur.lastrowid
+
+
+def list_verification_runs(limit=20):
+    with connect() as c:
+        rows=c.execute("SELECT * FROM verification_runs ORDER BY id DESC LIMIT ?",
+                       (max(1,min(limit,100)),)).fetchall()
+    return [{"id":row["id"],"checks":json.loads(row["checks_json"]),
+             "result":json.loads(row["result_json"]),"created_at":row["created_at"]} for row in rows]
