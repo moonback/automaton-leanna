@@ -98,7 +98,7 @@ export default function App() {
   }
   useEffect(() => {
     void refreshAll();
-    const id = window.setInterval(() => { void refreshBase(); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); }, 3000);
+    const id = window.setInterval(() => { void refreshBase(); void refreshResources().catch(() => {}); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); }, 3000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -271,7 +271,9 @@ export default function App() {
             <article className="dash-card quick-actions"><div className="dash-heading"><h3><Zap/> Accès rapide</h3></div><button onClick={()=>setPage('agent')}><Bot/>Ouvrir l’agent</button><button onClick={()=>setPage('tasks')}><Play/>Nouvelle tâche</button><button onClick={()=>setPage('agents')}><Users/>Équipe multi-agents</button><button onClick={()=>setPage('resources')}><Gauge/>Surveiller les ressources</button></article>
           </section>
         </>}
-\n        {page === 'agent' && <>
+
+
+        {page === 'agent' && <>
           <section className="metrics">
             <div className="metric"><Cpu /><div><small>FOURNISSEUR · MODÈLE</small><b>{provider} · {model}</b></div></div>
             <div className="metric"><Folder /><div><small>FICHIERS WORKSPACE</small><b>{workspace.length}</b></div></div>
