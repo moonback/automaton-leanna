@@ -109,3 +109,30 @@ Limites : ces sondes prouvent uniquement qu'un service local répond ou qu'un po
 
 ### Tests
 `python -m unittest discover -s tests -v` couvre les contrôles de chemin, le délai d'exécution, le cycle démarrage/arrêt et la sécurité des processus orphelins.
+
+## Containment Windows et tableau de bord des processus (1.2.0)
+
+### Job Objects natifs
+Sous Windows 10/11, Automaton crée chaque processus Python en état suspendu, l'assigne à un Windows Job Object, puis le reprend. Cela évite que le script commence avant l'application des limites. Le Job Object applique :
+- mémoire maximale par processus et pour le groupe : 512 Mo ;
+- temps CPU utilisateur maximal par processus : 30 secondes pour une exécution ponctuelle, 1 heure pour un processus géré ;
+- maximum de 16 processus enfants pour une exécution ponctuelle et 32 pour un processus géré ;
+- terminaison de l'arbre de processus lorsque le handle du Job Object est fermé.
+
+L'assignation au Job Object échoue de manière fermée : le processus suspendu est terminé si les limites ne peuvent pas être installées. Les processus gérés sont arrêtés automatiquement à la fermeture du backend par la règle `KILL_ON_JOB_CLOSE`. Leur historique est alors marqué `interrupted` au prochain démarrage.
+
+### Interface de supervision
+Un nouvel écran **Processus** permet de :
+- démarrer un script Python existant du workspace ;
+- suivre PID, état, date de démarrage et profil de confinement ;
+- consulter les dernières lignes du journal ;
+- arrêter un processus et son arbre de descendants.
+
+L'interface actualise la liste automatiquement. Les journaux sont plafonnés à 2 Mo par processus.
+
+### Limites de sécurité
+Les Windows Job Objects sont un mécanisme de gestion et de confinement des ressources, **pas une frontière de sécurité**. Ils ne restreignent pas les accès aux fichiers, au registre, aux identifiants de l'utilisateur ni au réseau. Le code exécuté conserve les permissions du compte Windows d'Automaton. Il ne faut pas exécuter de code hostile ou non fiable.
+
+Une isolation de sécurité plus forte nécessitera une étape distincte : AppContainer avec jeton restreint et capacités minimales, ou exécution dans Windows Sandbox / une VM. La version 1.2.0 ne prétend pas fournir cette isolation.
+
+Tests ajoutés : `backend/tests/test_windows_job.py` vérifie l'assignation et l'arrêt d'un processus suspendu sur Windows ; le test est ignoré sur les autres systèmes.
