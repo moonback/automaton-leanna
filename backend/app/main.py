@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from . import db, tools, memory, resources, improvements, agents, objectives
+from . import db, tools, memory, resources, improvements, agents, objectives, verification
 from .agent import run_agent
 from .heartbeat import worker
 from .tasks import worker as task_worker
@@ -72,7 +72,7 @@ class TeamRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.6.0"}
+    return {"status": "ok", "version": "0.8.0"}
 
 @app.get("/config")
 def public_config():
@@ -217,3 +217,15 @@ async def objective_supervise(objective_id: int):
         return await objectives.supervise_objective(objective_id)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+class VerificationRequest(BaseModel):
+    checks: list[dict] = Field(min_length=1, max_length=50)
+
+@app.post("/verification/workspace")
+def workspace_verification(req: VerificationRequest):
+    """Run explicit, read-only checks against workspace artifacts."""
+    try:
+        return verification.verify_workspace(req.checks)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
