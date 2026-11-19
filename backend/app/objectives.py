@@ -5,8 +5,8 @@ import logging
 import httpx
 
 from . import db
-from .config import API_KEY, BASE_URL, MODEL
-from .agent import provider_headers
+from .config import API_KEY
+from .agent import chat_completion
 from . import objective_verification
 
 log = logging.getLogger(__name__)
@@ -17,16 +17,11 @@ async def _chat_json(system_prompt, user_prompt, timeout=90):
     if not API_KEY:
         raise RuntimeError("Clé API absente : supervision indisponible.")
     async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(
-            f"{BASE_URL}/chat/completions",
-            headers=provider_headers(),
-            json={"model": MODEL, "messages":[
-                {"role":"system","content":system_prompt},
-                {"role":"user","content":user_prompt}
-            ], "response_format":{"type":"json_object"}},
-        )
-        response.raise_for_status()
-        raw=response.json()["choices"][0]["message"].get("content") or "{}"
+        data = await chat_completion(client, {"messages":[
+            {"role":"system","content":system_prompt},
+            {"role":"user","content":user_prompt}
+        ], "response_format":{"type":"json_object"}})
+        raw=data["choices"][0]["message"].get("content") or "{}"
     payload=json.loads(raw)
     if not isinstance(payload,dict):
         raise ValueError("Réponse JSON de l'IA invalide.")

@@ -49,6 +49,29 @@ def provider_headers():
     return headers
 
 
+RETRY_STATUSES = {429, 500, 502, 503, 504}
+
+
+async def chat_completion(client: httpx.AsyncClient, payload: dict, attempts: int = 3):
+    """POST /chat/completions, retrying rate limits, provider 5xx and network errors (2 s, 4 s, or Retry-After <= 30 s)."""
+    for attempt in range(1, attempts + 1):
+        delay = 2 ** attempt
+        try:
+            response = await client.post(f"{BASE_URL}/chat/completions", headers=provider_headers(),
+                                         json={"model": MODEL, **payload})
+        except httpx.NetworkError:
+            if attempt == attempts:
+                raise
+        else:
+            if response.status_code not in RETRY_STATUSES or attempt == attempts:
+                response.raise_for_status()
+                return response.json()
+            retry_after = response.headers.get("Retry-After", "")
+            if retry_after.isdigit():
+                delay = min(int(retry_after), 30)
+        await asyncio.sleep(delay)
+
+
 async def run_agent(prompt: str, use_history: bool = False):
     """use_history: only the interactive chat shares the conversation; tasks/heartbeat run with a clean context."""
     if not API_KEY or API_KEY in {"replace_me", "your_openrouter_api_key"}:
@@ -72,13 +95,8 @@ async def run_agent(prompt: str, use_history: bool = False):
 
     async with httpx.AsyncClient(timeout=90) as client:
         for step in range(MAX_STEPS):
-            response = await client.post(
-                f"{BASE_URL}/chat/completions",
-                headers=provider_headers(),
-                json={"model":MODEL,"messages":messages,"tools":DEFS,"tool_choice":"auto"},
-            )
-            response.raise_for_status()
-            message = response.json()["choices"][0]["message"]
+            data = await chat_completion(client, {"messages":messages,"tools":DEFS,"tool_choice":"auto"})
+            message = data["choices"][0]["message"]
             if not message.get("tool_calls"):
                 answer = message.get("content") or "Tâche terminée."
                 if use_history:

@@ -1,7 +1,9 @@
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import db, tools, memory, resources, improvements, agents, objectives, verification, external_verification, processes
@@ -43,6 +45,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Automaton Local API", version="1.4.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
+# DNS rebinding: a hostile domain resolved to 127.0.0.1 still sends its own Host header.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+
+
+@app.middleware("http")
+async def require_json_for_mutations(request: Request, call_next):
+    """CSRF guard: a foreign web page cannot send Content-Type: application/json without a
+    CORS preflight, which CORSMiddleware refuses. Bodyless POSTs (supervise, retry) were otherwise forgeable."""
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if content_type != "application/json":
+            return JSONResponse({"detail": "Content-Type application/json requis."}, status_code=415)
+    return await call_next(request)
 
 class RunRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=12000)
