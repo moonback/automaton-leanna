@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
-app = FastAPI(title="Automaton Local API", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="Automaton Local API", version="1.2.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -76,7 +76,7 @@ class TeamRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "1.1.0"}
+    return {"status": "ok", "version": "1.2.0"}
 
 @app.get("/config")
 def public_config():
@@ -158,8 +158,8 @@ def process_stop(process_id: int):
     record = processes.stop(process_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Processus introuvable")
-    if record["status"] == "orphaned":
-        raise HTTPException(status_code=409, detail="Processus démarré avant le dernier redémarrage : arrêt manuel requis pour éviter un risque de PID réutilisé.")
+    if record["status"] in {"orphaned", "interrupted"}:
+        raise HTTPException(status_code=409, detail="Ce processus n'est plus contrôlable depuis cette session backend.")
     return record
 
 @app.get("/resources")
