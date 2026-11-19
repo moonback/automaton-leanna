@@ -7,23 +7,31 @@ from pydantic import BaseModel, Field
 from . import db, tools, memory, resources, improvements, agents
 from .agent import run_agent
 from .heartbeat import worker
+from .tasks import worker as task_worker
 from .config import PROVIDER, MODEL
 
 heartbeat_task = None
+task_worker_task = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global heartbeat_task
+    global heartbeat_task, task_worker_task
     db.init()
     heartbeat_task = asyncio.create_task(worker())
+    task_worker_task = asyncio.create_task(task_worker())
     yield
+    task_worker_task.cancel()
+    try:
+        await task_worker_task
+    except asyncio.CancelledError:
+        pass
     heartbeat_task.cancel()
     try:
         await heartbeat_task
     except asyncio.CancelledError:
         pass
 
-app = FastAPI(title="Automaton Local API", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Automaton Local API", version="0.5.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -43,12 +51,15 @@ class HeartbeatRequest(BaseModel):
 class ImprovementRequest(BaseModel):
     patch: str = Field(min_length=1, max_length=50000)
 
+class TaskRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=12000)
+
 class TeamRequest(BaseModel):
     task: str = Field(min_length=1, max_length=12000)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.4.0"}
+    return {"status": "ok", "version": "0.5.0"}
 
 @app.get("/config")
 def public_config():
@@ -114,3 +125,28 @@ def improvement_apply(req: ImprovementRequest):
         raise HTTPException(status_code=403, detail=str(exc))
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/tasks")
+def task_list(limit: int = 50):
+    return {"tasks": db.list_tasks(limit)}
+
+@app.post("/tasks", status_code=202)
+def task_create(req: TaskRequest):
+    return db.create_task(req.prompt)
+
+@app.get("/tasks/{task_id}")
+def task_detail(task_id: int):
+    task = db.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Tâche introuvable")
+    return task
+
+@app.delete("/tasks/{task_id}")
+def task_cancel(task_id: int):
+    if not db.cancel_task(task_id):
+        task = db.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Tâche introuvable")
+        raise HTTPException(status_code=409, detail="Seules les tâches en attente peuvent être annulées")
+    return {"cancelled": True, "id": task_id}
