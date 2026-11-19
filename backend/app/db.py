@@ -238,10 +238,7 @@ def reconcile_objective_task(task_id, status, result="", error=""):
         failed=c.execute("SELECT COUNT(*) FROM objective_steps WHERE objective_id=? AND status='failed'",
                          (step["objective_id"],)).fetchone()[0]
         objective_status=c.execute("SELECT status FROM objectives WHERE id=?",(step["objective_id"],)).fetchone()
-        if remaining==0 and objective_status and objective_status["status"] == "active":
-            c.execute("UPDATE objectives SET status='completed',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                      (step["objective_id"],))
-        elif failed:
+        if failed:
             c.execute("UPDATE objectives SET status='active',updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='active'",
                       (step["objective_id"],))
 
