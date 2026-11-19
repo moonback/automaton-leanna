@@ -54,13 +54,13 @@ def save_appended_plan(objective_id, steps):
     with db.connect() as conn:
         rows = conn.execute("SELECT id,position FROM objective_steps WHERE objective_id=? ORDER BY position",
                             (objective_id,)).fetchall()
-        pending = list(steps)
+        by_title = {(item["title"], item["description"]): item for item in steps}
         for row in rows:
             existing = conn.execute("SELECT 1 FROM objective_step_verification WHERE step_id=?", (row["id"],)).fetchone()
             if existing:
                 continue
-            if pending:
-                candidate = pending.pop(0)
+            candidate = by_title.get((row["title"], row["description"]))
+            if candidate:
                 conn.execute("INSERT INTO objective_step_verification(step_id,checks_json) VALUES(?,?)",
                              (row["id"], json.dumps(candidate["checks"], ensure_ascii=False)))
 
