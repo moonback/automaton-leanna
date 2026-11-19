@@ -149,14 +149,17 @@ def decide(request_id, approve, executor, actor="user"):
             raise ValueError("Cette demande n'est plus en attente.")
         if row["expires_at"] <= _now():
             conn.execute("UPDATE permission_requests SET status='expired',decided_at=CURRENT_TIMESTAMP WHERE id=?", (request_id,))
-            raise ValueError("Cette demande a expiré.")
-        if not approve:
-            conn.execute("UPDATE permission_requests SET status='denied',decided_at=CURRENT_TIMESTAMP WHERE id=?", (request_id,))
-            _audit("approval_decision", row["tool"], row["arguments_summary"], "denied", actor, "Refus humain")
-            return {"id": request_id, "status": "denied"}
-        conn.execute("UPDATE permission_requests SET status='approved',decided_at=CURRENT_TIMESTAMP WHERE id=?", (request_id,))
-        tool, arguments, summary = row["tool"], json.loads(row["arguments_json"]), row["arguments_summary"]
-    # Re-check the active profile at execution time; an approval cannot outlive a revocation.
+            expired = True
+        else:
+            expired = False
+            tool, arguments, summary = row["tool"], json.loads(row["arguments_json"]), row["arguments_summary"]
+            conn.execute("UPDATE permission_requests SET status=? ,decided_at=CURRENT_TIMESTAMP WHERE id=?",
+                         ("approved" if approve else "denied", request_id))
+    if expired:
+        raise ValueError("Cette demande a expiré.")
+    if not approve:
+        _audit("approval_decision", tool, summary, "denied", actor, "Refus humain")
+        return {"id": request_id, "status": "denied"}
     config = get_config()
     if "*" not in PROFILES[config["profile"]] and tool not in PROFILES[config["profile"]]:
         with db.connect() as conn:
@@ -177,5 +180,14 @@ def decide(request_id, approve, executor, actor="user"):
     finally:
         with db.connect() as conn:
             conn.execute("UPDATE permission_requests SET status=?,result_summary=? WHERE id=?",
-                         (status if "status" in locals() else "failed", result_summary if "result_summary" in locals() else "Échec", request_id))
+                         (status if "status" in locals() else "failed",
+                          result_summary if "result_summary" in locals() else "Échec", request_id))
     return {"id": request_id, "status": status, "result": result}
+
+
+def list_audit(limit=100):
+    with db.connect() as conn:
+        rows = conn.execute("""SELECT id,event,tool,arguments_summary,decision,actor,result_summary,created_at
+            FROM permission_audit ORDER BY id DESC LIMIT ?""",
+            (max(1, min(int(limit), 500)),)).fetchall()
+    return [dict(row) for row in rows]
