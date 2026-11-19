@@ -66,7 +66,7 @@ The agent's file tools are restricted to `backend/workspace/`; Python script exe
 - Les chemins absolus, traversées hors workspace, contrôles inconnus et fichiers de plus de 2 Mo sont refusés. Aucun code arbitraire n'est exécuté.
 - Tests unitaires standard-library : `cd backend && python -m unittest discover -s tests -v`.
 - GitHub Actions exécute les tests backend sur Ubuntu et Windows, puis construit l'interface avec `npm ci && npm run build`.
-- Limite importante : cette première version fournit des contrôles déterministes sur les artefacts du workspace. Elle ne certifie pas encore automatiquement les effets externes (réseau, processus, services) et ne remplace pas les critères d'acceptation propres à chaque objectif.
+- Limite importante : les contrôles externes de la version 1.0.0 vérifient uniquement les services HTTP et ports TCP locaux en loopback. Ils ne prouvent pas l'identité du processus, sa stabilité dans le temps ni les effets sur un service distant.
 
 
 ## Vérification des étapes d'objectifs (0.9.0)
