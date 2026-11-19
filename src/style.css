@@ -15,3 +15,11 @@
 .statuspill.succeeded { color: #75d4a2; }
 .statuspill.failed { color: #ff9292; }
 .statuspill.cancelled { color: #a3a9b4; }
+
+
+.progress { height: 7px; overflow: hidden; border-radius: 99px; background: var(--surface-2, #252a35); margin: 12px 0; }
+.progress > div { height: 100%; border-radius: inherit; background: var(--accent, #8b9cff); transition: width .2s ease; }
+.statuspill.pending { opacity: .7; }
+.statuspill.active, .statuspill.queued { color: var(--accent, #aab6ff); }
+.statuspill.completed, .statuspill.succeeded { color: #65c99a; }
+.statuspill.failed { color: #f08b8b; }
