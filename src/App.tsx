@@ -42,7 +42,7 @@ export default function App() {
   const [taskPrompt, setTaskPrompt] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
-  const [objectiveEvents, setObjectiveEvents] = useState<Record<number, {id:number;event_type:string;message:string;created_at:string}[]>>({});
+  const [objectiveEvents, setObjectiveEvents] = useState<Record<number, {id:number;event_type:string;message:string;details?:string;created_at:string}[]>>({});
   const [objectiveRevisions, setObjectiveRevisions] = useState<Record<number, {id:number;revision:number;reason:string;plan_json:string;created_at:string}[]>>({});
   const [goalTitle, setGoalTitle] = useState('');
   const [goalDescription, setGoalDescription] = useState('');
@@ -141,7 +141,7 @@ export default function App() {
     catch(e) { setError(e instanceof Error ? e.message : 'Supervision impossible'); }
   }
   async function loadObjectiveHistory(id:number) {
-    try { const data=await request<{events:{id:number;event_type:string;message:string;created_at:string}[];revisions:{id:number;revision:number;reason:string;plan_json:string;created_at:string}[]}>(`/objectives/${id}/history`); setObjectiveEvents(current=>({...current,[id]:data.events})); setObjectiveRevisions(current=>({...current,[id]:data.revisions})); }
+    try { const data=await request<{events:{id:number;event_type:string;message:string;details?:string;created_at:string}[];revisions:{id:number;revision:number;reason:string;plan_json:string;created_at:string}[]}>(`/objectives/${id}/history`); setObjectiveEvents(current=>({...current,[id]:data.events})); setObjectiveRevisions(current=>({...current,[id]:data.revisions})); }
     catch(e) { setError(e instanceof Error ? e.message : 'Historique indisponible'); }
   }
   async function retryObjectiveStep(objectiveId:number,stepId:number) {
