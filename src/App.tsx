@@ -63,7 +63,16 @@ export default function App() {
   const [heartbeatRuns, setHeartbeatRuns] = useState<HeartbeatRun[]>([]);
   const [resources, setResources] = useState<ResourceSnapshot | null>(null);
   const [resourceHistory, setResourceHistory] = useState<ResourcePoint[]>([]);
-  const [alertThresholds, setAlertThresholds] = useState({ cpu: 85, memory: 90, disk: 90 });
+  const [alertThresholds, setAlertThresholds] = useState(() => {
+    try {
+      const saved = localStorage.getItem('automaton.resourceAlertThresholds');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return { cpu: Math.max(1, Math.min(100, Number(parsed.cpu) || 85)), memory: Math.max(1, Math.min(100, Number(parsed.memory) || 90)), disk: Math.max(1, Math.min(100, Number(parsed.disk) || 90)) };
+      }
+    } catch { /* valeurs par défaut si le stockage local est illisible */ }
+    return { cpu: 85, memory: 90, disk: 90 };
+  });
   const [managedProcesses, setManagedProcesses] = useState<ManagedProcess[]>([]);
   const [processScript, setProcessScript] = useState('');
   const [processLogs, setProcessLogs] = useState<Record<number,string>>({});
@@ -111,6 +120,10 @@ export default function App() {
     try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshProcesses(), refreshTasks(), refreshObjectives()]); }
     catch (e) { setError(e instanceof Error ? e.message : 'Erreur de chargement'); }
   }
+  useEffect(() => {
+    try { localStorage.setItem('automaton.resourceAlertThresholds', JSON.stringify(alertThresholds)); } catch { /* stockage local facultatif */ }
+  }, [alertThresholds]);
+
   useEffect(() => {
     void refreshAll();
     const id = window.setInterval(() => { void refreshBase(); void refreshResources().catch(() => {}); void refreshProcesses().catch(() => {}); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); }, 3000);
