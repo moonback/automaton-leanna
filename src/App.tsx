@@ -215,7 +215,7 @@ export default function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand"><div className="logo"><Bot /></div><div><b>Automaton</b><small>LOCAL AGENT · 0.8.0</small></div></div>
+        <div className="brand"><div className="logo"><Bot /></div><div><b>Automaton</b><small>LOCAL AGENT · 0.9.0</small></div></div>
         <div className="navgroup">{nav.map(item => {
           const Icon = item.icon;
           return <button key={item.id} className={`nav ${page === item.id ? 'active' : ''}`} onClick={() => { setPage(item.id); setError(''); setNotice(''); }}>
@@ -293,7 +293,7 @@ export default function App() {
               {(goal.status==='active'||goal.status==='paused') && <button className="dangericon" onClick={()=>void changeObjectiveStatus(goal.id,'cancelled')}>Annuler</button>}
             </div>
             {objectiveRevisions[goal.id]?.map(revision=><div className="revisionrow" key={revision.id}><b>Plan v{revision.revision} · {revision.reason}</b><small>{revision.created_at}</small><pre>{JSON.parse(revision.plan_json).map((step:{title:string;description:string},index:number)=>`${index+1}. ${step.title} — ${step.description}`).join('\n')}</pre></div>)}
-            {objectiveEvents[goal.id]?.map(event=><div className="runrow" key={event.id}><span className="statuspill">{event.event_type}</span><div><b>{event.message}</b><small>{event.created_at}</small></div></div>)}
+            {objectiveEvents[goal.id]?.map(event=><div className="runrow" key={event.id}><span className="statuspill">{event.event_type}</span><div><b>{event.message}</b><small>{event.created_at}</small>{event.details && <small>{event.details}</small>}</div></div>)}
             {goal.steps?.map(step=><div className="runrow" key={step.id}><span className={`statuspill ${step.status}`}>{step.status}</span><div><b>{step.position}. {step.title}</b><small>{step.description}</small>{step.result && <small>Résultat : {step.result}</small>}{step.error && <small className="taskerror">{step.error}</small>}</div>{step.status==='failed' && <button className="secondary" onClick={()=>void retryObjectiveStep(goal.id,step.id)}>Relancer</button>}</div>)}
           </article>) : <p className="empty">Aucun objectif défini.</p>}
         </section>}
