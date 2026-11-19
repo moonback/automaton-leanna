@@ -38,8 +38,9 @@ async def lifespan(app: FastAPI):
         await heartbeat_task
     except asyncio.CancelledError:
         pass
+    processes.shutdown()
 
-app = FastAPI(title="Automaton Local API", version="1.2.0", lifespan=lifespan)
+app = FastAPI(title="Automaton Local API", version="1.3.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -70,13 +71,14 @@ class ObjectiveRequest(BaseModel):
 
 class ProcessStartRequest(BaseModel):
     path: str = Field(min_length=1, max_length=500)
+    isolation: str = Field(default="job_object", max_length=40)
 
 class TeamRequest(BaseModel):
     task: str = Field(min_length=1, max_length=12000)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "1.2.0"}
+    return {"status": "ok", "version": "1.3.0"}
 
 @app.get("/config")
 def public_config():
@@ -132,7 +134,7 @@ def process_list(limit: int = 50):
 @app.post("/processes", status_code=201)
 def process_start(req: ProcessStartRequest):
     try:
-        return processes.start(req.path)
+        return processes.start(req.path, req.isolation)
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
