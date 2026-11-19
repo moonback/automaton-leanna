@@ -18,7 +18,10 @@ type ResourceSnapshot = {
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
 type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
-type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string; stopped_at:string|null; isolation:string; isolation_profile:string; security_boundary:string };\ntype PermissionConfig = { profile:string; updated_at:string; available_profiles:string[] };\ntype PermissionRequest = { id:number; tool:string; arguments_summary:string; status:string; expires_at:string; created_at:string; result_summary:string };\ntype AuditEvent = { id:number; event:string; tool:string; arguments_summary:string; decision:string; actor:string; result_summary:string; created_at:string };
+type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string; stopped_at:string|null; isolation:string; isolation_profile:string; security_boundary:string };
+type PermissionConfig = { profile:string; updated_at:string; available_profiles:string[] };
+type PermissionRequest = { id:number; tool:string; arguments_summary:string; status:string; expires_at:string; created_at:string; result_summary:string };
+type AuditEvent = { id:number; event:string; tool:string; arguments_summary:string; decision:string; actor:string; result_summary:string; created_at:string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -46,7 +49,10 @@ export default function App() {
   const [processPath, setProcessPath] = useState('');
   const [processIsolation, setProcessIsolation] = useState<'job_object'|'windows_sandbox'>('windows_sandbox');
   const [selectedProcess, setSelectedProcess] = useState<number | null>(null);
-  const [processLog, setProcessLog] = useState('');\n  const [permissionConfig, setPermissionConfig] = useState<PermissionConfig | null>(null);\n  const [permissionRequests, setPermissionRequests] = useState<PermissionRequest[]>([]);\n  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [processLog, setProcessLog] = useState('');
+  const [permissionConfig, setPermissionConfig] = useState<PermissionConfig | null>(null);
+  const [permissionRequests, setPermissionRequests] = useState<PermissionRequest[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [objectiveEvents, setObjectiveEvents] = useState<Record<number, {id:number;event_type:string;message:string;details?:string;created_at:string}[]>>({});
   const [objectiveRevisions, setObjectiveRevisions] = useState<Record<number, {id:number;revision:number;reason:string;plan_json:string;created_at:string}[]>>({});
@@ -94,7 +100,11 @@ export default function App() {
   }
   async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
   async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
-  async function refreshProcesses() { const data = await request<{ processes: ManagedProcess[] }>('/processes'); setManagedProcesses(data.processes); }\n  async function refreshPermissions() {\n    const [config, requests, audit] = await Promise.all([request<PermissionConfig>('/permissions'), request<{requests:PermissionRequest[]}>('/permissions/requests'), request<{events:AuditEvent[]}>('/permissions/audit')]);\n    setPermissionConfig(config); setPermissionRequests(requests.requests); setAuditEvents(audit.events);\n  }
+  async function refreshProcesses() { const data = await request<{ processes: ManagedProcess[] }>('/processes'); setManagedProcesses(data.processes); }
+  async function refreshPermissions() {
+    const [config, requests, audit] = await Promise.all([request<PermissionConfig>('/permissions'), request<{requests:PermissionRequest[]}>('/permissions/requests'), request<{events:AuditEvent[]}>('/permissions/audit')]);
+    setPermissionConfig(config); setPermissionRequests(requests.requests); setAuditEvents(audit.events);
+  }
   async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); const details = await Promise.all(data.objectives.map(item => request<Objective>(`/objectives/${item.id}`))); setObjectives(details); }
   async function refreshAll() {
     setError('');
@@ -160,7 +170,16 @@ export default function App() {
     catch (e) { setError(e instanceof Error ? e.message : 'Annulation impossible'); }
   }
 
-  async function changePermissionProfile(profile:string) {\n    try { await request('/permissions/profile',{method:'PUT',body:JSON.stringify({profile})}); await refreshPermissions(); setNotice(`Profil de confiance : ${profile}`); }\n    catch(e) { setError(e instanceof Error ? e.message : 'Modification du profil impossible'); }\n  }\n  async function decidePermission(id:number, approve:boolean) {\n    try { await request(`/permissions/requests/${id}/decision`,{method:'POST',body:JSON.stringify({approve})}); await refreshPermissions(); setNotice(approve ? `Action #${id} approuvée et exécutée.` : `Action #${id} refusée.`); }\n    catch(e) { setError(e instanceof Error ? e.message : 'Décision impossible'); await refreshPermissions(); }\n  }\n\n  async function startManagedProcess() {
+  async function changePermissionProfile(profile:string) {
+    try { await request('/permissions/profile',{method:'PUT',body:JSON.stringify({profile})}); await refreshPermissions(); setNotice(`Profil de confiance : ${profile}`); }
+    catch(e) { setError(e instanceof Error ? e.message : 'Modification du profil impossible'); }
+  }
+  async function decidePermission(id:number, approve:boolean) {
+    try { await request(`/permissions/requests/${id}/decision`,{method:'POST',body:JSON.stringify({approve})}); await refreshPermissions(); setNotice(approve ? `Action #${id} approuvée et exécutée.` : `Action #${id} refusée.`); }
+    catch(e) { setError(e instanceof Error ? e.message : 'Décision impossible'); await refreshPermissions(); }
+  }
+
+  async function startManagedProcess() {
     const path = processPath.trim();
     if (!path) return;
     setError(''); setNotice('');
@@ -239,7 +258,8 @@ export default function App() {
     { id: 'heartbeat', label: 'Heartbeat', icon: Activity },
     { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'resources', label: 'Ressources', icon: Gauge },
-    { id: 'processes', label: 'Processus', icon: Cpu },\n    { id: 'permissions', label: 'Permissions', icon: ShieldCheck },
+    { id: 'processes', label: 'Processus', icon: Cpu },
+    { id: 'permissions', label: 'Permissions', icon: ShieldCheck },
     { id: 'agents', label: 'Multi-agents', icon: Users },
     { id: 'improvements', label: 'Auto-amélioration', icon: GitBranch }
   ];
@@ -329,7 +349,8 @@ export default function App() {
               {goal.status==='paused' && <button className="secondary" onClick={()=>void changeObjectiveStatus(goal.id,'active')}>Reprendre</button>}
               {(goal.status==='active'||goal.status==='paused') && <button className="dangericon" onClick={()=>void changeObjectiveStatus(goal.id,'cancelled')}>Annuler</button>}
             </div>
-            {objectiveRevisions[goal.id]?.map(revision=><div className="revisionrow" key={revision.id}><b>Plan v{revision.revision} · {revision.reason}</b><small>{revision.created_at}</small><pre>{JSON.parse(revision.plan_json).map((step:{title:string;description:string},index:number)=>`${index+1}. ${step.title} — ${step.description}`).join('\n')}</pre></div>)}
+            {objectiveRevisions[goal.id]?.map(revision=><div className="revisionrow" key={revision.id}><b>Plan v{revision.revision} · {revision.reason}</b><small>{revision.created_at}</small><pre>{JSON.parse(revision.plan_json).map((step:{title:string;description:string},index:number)=>`${index+1}. ${step.title} — ${step.description}`).join('
+')}</pre></div>)}
             {objectiveEvents[goal.id]?.map(event=><div className="runrow" key={event.id}><span className="statuspill">{event.event_type}</span><div><b>{event.message}</b><small>{event.created_at}</small>{event.details && <small>{event.details}</small>}</div></div>)}
             {goal.steps?.map(step=><div className="runrow" key={step.id}><span className={`statuspill ${step.status}`}>{step.status}</span><div><b>{step.position}. {step.title}</b><small>{step.description}</small>{step.result && <small>Résultat : {step.result}</small>}{step.error && <small className="taskerror">{step.error}</small>}</div>{step.status==='failed' && <button className="secondary" onClick={()=>void retryObjectiveStep(goal.id,step.id)}>Relancer</button>}</div>)}
           </article>) : <p className="empty">Aucun objectif défini.</p>}
@@ -415,7 +436,8 @@ export default function App() {
           <h3>Journal d'audit · {auditEvents.length} événements récents</h3>
           {auditEvents.length ? auditEvents.map(item=><div className="runrow" key={item.id}><span className={`statuspill ${item.decision}`}>{item.decision}</span><div><b>{item.event} · {item.tool}</b><small>{item.actor} · {item.created_at}</small><small>{item.arguments_summary}</small>{item.result_summary && <small>{item.result_summary}</small>}</div></div>) : <p className="empty">Aucun événement enregistré.</p>}
         </section>}
-\n        {page === 'agents' && <section className="panel">
+
+        {page === 'agents' && <section className="panel">
           <div className="panelintro"><Users /><div><h2>Équipe spécialisée</h2><p>Trois rôles exécutés séquentiellement via le fournisseur IA configuré.</p></div></div>
           <div className="rolegrid"><div><b>01 · Planificateur</b><small>Décompose la tâche en étapes.</small></div><div><b>02 · Analyste</b><small>Identifie faits, risques et inconnues.</small></div><div><b>03 · Réviseur</b><small>Recherche erreurs et tests manquants.</small></div></div>
           <label>Tâche à déléguer<textarea rows={4} value={teamTask} onChange={e => setTeamTask(e.target.value)} placeholder="Décris une tâche à analyser par l'équipe…" /></label>
@@ -426,7 +448,9 @@ export default function App() {
         {page === 'improvements' && <section className="panel">
           <div className="panelintro"><GitBranch /><div><h2>Application de patch Git</h2><p>Le moteur applique un diff unifié au backend local, compile le code et annule le patch si la compilation échoue.</p></div></div>
           <div className="warning"><ShieldCheck size={17} /><span>Fonction désactivée par défaut. Elle exige AUTO_IMPROVE_ENABLED=true, un dépôt Git propre et un patch limité à backend/app/. Le patch appliqué n’est pas automatiquement commité.</span></div>
-          <label>Patch unifié<textarea className="patcharea" rows={15} value={patch} onChange={e => setPatch(e.target.value)} placeholder={'diff --git a/backend/app/... b/backend/app/...\n--- a/backend/app/...\n+++ b/backend/app/...'} /></label>
+          <label>Patch unifié<textarea className="patcharea" rows={15} value={patch} onChange={e => setPatch(e.target.value)} placeholder={'diff --git a/backend/app/... b/backend/app/...
+--- a/backend/app/...
++++ b/backend/app/...'} /></label>
           <button className="primary" disabled={busy || !patch.trim()} onClick={() => void applyPatch()}><GitBranch size={15} /> {busy ? 'Validation…' : 'Valider et appliquer le patch'}</button>
         </section>}
         <footer><Zap size={13} /> Automaton · Exécution locale · Clés API conservées côté backend</footer>
