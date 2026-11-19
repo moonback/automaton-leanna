@@ -40,3 +40,6 @@
 .processlogs pre { max-height:360px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:#09111c; color:#c5d5e7; border:1px solid #29394f; border-radius:9px; padding:14px; font:10px/1.6 Consolas,monospace; }
 .statuspill.interrupted { background:#3c2f25; color:#e7bd88; }
 .statuspill.orphaned { background:#3c2f25; color:#e7bd88; }
+
+.permissionargs{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;background:#0b1420;border:1px solid #29394f;border-radius:8px;padding:11px;color:#aebfd3;font:10px/1.5 Consolas,monospace}
+.statuspill.pending{background:#45371e;color:#edcf87}.statuspill.approval_required{background:#45371e;color:#edcf87}.statuspill.denied{background:#48282d;color:#f1a3a9}.statuspill.executed{background:#173b35;color:#83d6b5}.statuspill.failed{background:#48282d;color:#f1a3a9}
