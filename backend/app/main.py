@@ -23,7 +23,7 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
-app = FastAPI(title="Automaton Local API", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Automaton Local API", version="0.4.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -48,7 +48,7 @@ class TeamRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.3.0"}
+    return {"status": "ok", "version": "0.4.0"}
 
 @app.get("/config")
 def public_config():
@@ -110,5 +110,7 @@ async def agents_run(req: TeamRequest):
 def improvement_apply(req: ImprovementRequest):
     try:
         return improvements.validate_and_apply(req.patch)
-    except Exception as exc:
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
