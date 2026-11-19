@@ -51,8 +51,7 @@ def create_job_for_suspended_process(process, memory_bytes=512 * 1024 * 1024,
     """Assign a CREATE_SUSPENDED Popen child before its first instruction."""
     if os.name != "nt":
         return None
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32 = _kernel32()
     job = kernel32.CreateJobObjectW(None, None)
     if not job:
         raise ctypes.WinError(ctypes.get_last_error())
@@ -86,9 +85,26 @@ def create_job_for_suspended_process(process, memory_bytes=512 * 1024 * 1024,
         raise
 
 
+def _kernel32():
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
+    kernel32.ResumeThread.restype = wintypes.DWORD
+    kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateJobObject.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    return kernel32
+
+
 def terminate_job(job, exit_code=1):
     if job:
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = _kernel32()
         if not kernel32.TerminateJobObject(job, exit_code):
             error = ctypes.get_last_error()
             if error != ERROR_ACCESS_DENIED:
@@ -97,4 +113,4 @@ def terminate_job(job, exit_code=1):
 
 def close_job(job):
     if job:
-        ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(job)
+        _kernel32().CloseHandle(job)
