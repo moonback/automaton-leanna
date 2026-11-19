@@ -226,6 +226,13 @@ class VerificationRequest(BaseModel):
 def workspace_verification(req: VerificationRequest):
     """Run explicit, read-only checks against workspace artifacts."""
     try:
-        return verification.verify_workspace(req.checks)
+        result = verification.verify_workspace(req.checks)
+        result["run_id"] = db.record_verification_run(req.checks, result)
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/verification/history")
+def verification_history(limit: int = 20):
+    return {"runs": db.list_verification_runs(limit)}
