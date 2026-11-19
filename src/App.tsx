@@ -10,10 +10,18 @@ type Page = 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resourc
 type Memory = { id: number; content: string; tags: string; importance: number; created_at: string };
 type HeartbeatRun = { id: number; status: string; summary: string; error: string; started_at: string };
 type HeartbeatConfig = { enabled: number; interval_seconds: number; prompt: string };
+type ResourceSettings = { cpu_warning: number; memory_warning: number; disk_warning: number };
 type ResourceSnapshot = {
-  platform: string; python: string; pid: number;
+  platform: string; python: string; pid: number; sampled_at: string;
+  cpu: { percent: number; logical_cores: number | null; physical_cores: number | null };
+  memory: { total_bytes: number; available_bytes: number; used_bytes: number; percent: number };
+  storage: { total_bytes: number; free_bytes: number; used_bytes: number; percent: number };
+  network: { bytes_sent: number; bytes_received: number; packets_sent: number; packets_received: number } | null;
+  gpu: { available: boolean; reason: string };
+  processes: { pid: number; name: string; cpu_percent: number; memory_percent: number; memory_bytes: number }[];
+  alerts: { metric: string; value: number; threshold: number; message: string }[];
+  settings: ResourceSettings;
   workspace: { file_count: number; total_bytes: number; files: { path: string; size: number }[] };
-  storage: { total_bytes: number; free_bytes: number };
 };
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
@@ -65,6 +73,7 @@ export default function App() {
   const [heartbeat, setHeartbeat] = useState<HeartbeatConfig | null>(null);
   const [heartbeatRuns, setHeartbeatRuns] = useState<HeartbeatRun[]>([]);
   const [resources, setResources] = useState<ResourceSnapshot | null>(null);
+  const [resourceSettings, setResourceSettings] = useState<ResourceSettings>({ cpu_warning: 85, memory_warning: 85, disk_warning: 90 });
   const [teamTask, setTeamTask] = useState('');
   const [teamResult, setTeamResult] = useState<AgentResult | null>(null);
   const [patch, setPatch] = useState('');
@@ -92,7 +101,7 @@ export default function App() {
     const data = await request<{ memories: Memory[] }>('/memory');
     setMemories(data.memories);
   }
-  async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
+  async function refreshResources() { const [snapshot, settings] = await Promise.all([request<ResourceSnapshot>('/resources'), request<ResourceSettings>('/resources/settings')]); setResources(snapshot); setResourceSettings(settings); }
   async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
   async function refreshProcesses() { const data = await request<{ processes: ManagedProcess[] }>('/processes'); setManagedProcesses(data.processes); }
   async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); const details = await Promise.all(data.objectives.map(item => request<Objective>(`/objectives/${item.id}`))); setObjectives(details); }
@@ -104,7 +113,7 @@ export default function App() {
   }
   useEffect(() => {
     void refreshAll();
-    const id = window.setInterval(() => { void refreshBase(); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); void refreshProcesses().catch(() => {}); }, 3000);
+    const id = window.setInterval(() => { void refreshBase(); void refreshResources().catch(() => {}); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); void refreshProcesses().catch(() => {}); }, 3000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -199,6 +208,14 @@ export default function App() {
   async function deleteMemory(id: number) {
     try { await request(`/memory/${id}`, { method: 'DELETE' }); await refreshMemories(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Suppression impossible'); }
+  }
+  async function saveResourceSettings() {
+    try {
+      const saved = await request<ResourceSettings>('/resources/settings', { method: 'PUT', body: JSON.stringify(resourceSettings) });
+      setResourceSettings(saved);
+      await refreshResources();
+      setNotice('Seuils de ressources enregistrés.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Enregistrement des seuils impossible'); }
   }
   async function saveHeartbeat() {
     if (!heartbeat) return;
@@ -357,16 +374,33 @@ export default function App() {
         </section>}
 
         {page === 'resources' && <section className="panel">
-          <div className="panelintro"><Gauge /><div><h2>État de la machine</h2><p>Informations d’exécution et inventaire limité au workspace.</p></div></div>
+          <div className="panelintro"><Gauge /><div><h2>Supervision des ressources</h2><p>Mesures système actualisées toutes les 3 secondes. La collecte est en lecture seule.</p></div></div>
           {resources && <>
+            {resources.alerts.length > 0 && <div className="warning"><Activity size={17} /><span>{resources.alerts.map(alert => alert.message).join(' · ')}</span></div>}
             <div className="resourcegrid">
-              <div className="resourcecard"><small>FICHIERS</small><b>{resources.workspace.file_count}</b><span>{formatBytes(resources.workspace.total_bytes)} dans le workspace</span></div>
-              <div className="resourcecard"><small>ESPACE LIBRE</small><b>{formatBytes(resources.storage.free_bytes)}</b><span>sur {formatBytes(resources.storage.total_bytes)}</span></div>
-              <div className="resourcecard"><small>PROCESSUS API</small><b>{resources.pid}</b><span>Python {resources.python}</span></div>
+              <div className="resourcecard"><small>CPU · {resources.cpu.logical_cores ?? '—'} cœurs logiques</small><b>{resources.cpu.percent.toFixed(1)} %</b><span>{resources.cpu.physical_cores ?? '—'} cœurs physiques</span><progress max="100" value={resources.cpu.percent} /></div>
+              <div className="resourcecard"><small>MÉMOIRE RAM</small><b>{resources.memory.percent.toFixed(1)} %</b><span>{formatBytes(resources.memory.used_bytes)} / {formatBytes(resources.memory.total_bytes)}</span><progress max="100" value={resources.memory.percent} /></div>
+              <div className="resourcecard"><small>STOCKAGE · DISQUE DE DONNÉES</small><b>{resources.storage.percent.toFixed(1)} %</b><span>{formatBytes(resources.storage.free_bytes)} libres / {formatBytes(resources.storage.total_bytes)}</span><progress max="100" value={resources.storage.percent} /></div>
+              <div className="resourcecard"><small>FICHIERS WORKSPACE</small><b>{resources.workspace.file_count}</b><span>{formatBytes(resources.workspace.total_bytes)} au total</span></div>
             </div>
-            <p className="subtle">{resources.platform}</p><h3>Fichiers du workspace</h3>
+            <h3>Trafic réseau cumulé depuis le démarrage</h3>
+            {resources.network ? <div className="resourcegrid">
+              <div className="resourcecard"><small>ENVOYÉ</small><b>{formatBytes(resources.network.bytes_sent)}</b><span>{resources.network.packets_sent.toLocaleString('fr-FR')} paquets</span></div>
+              <div className="resourcecard"><small>REÇU</small><b>{formatBytes(resources.network.bytes_received)}</b><span>{resources.network.packets_received.toLocaleString('fr-FR')} paquets</span></div>
+            </div> : <p className="empty">Compteurs réseau indisponibles.</p>}
+            <h3>Seuils d'alerte</h3>
+            <div className="formgrid">
+              <label>CPU (%)<input type="number" min="1" max="100" value={resourceSettings.cpu_warning} onChange={e=>setResourceSettings({...resourceSettings,cpu_warning:Number(e.target.value)})} /></label>
+              <label>RAM (%)<input type="number" min="1" max="100" value={resourceSettings.memory_warning} onChange={e=>setResourceSettings({...resourceSettings,memory_warning:Number(e.target.value)})} /></label>
+              <label>Disque (%)<input type="number" min="1" max="100" value={resourceSettings.disk_warning} onChange={e=>setResourceSettings({...resourceSettings,disk_warning:Number(e.target.value)})} /></label>
+            </div>
+            <button className="secondary" onClick={()=>void saveResourceSettings()}>Enregistrer les seuils</button>
+            <h3>Processus les plus consommateurs de mémoire</h3>
+            {resources.processes.map(proc=><div className="file" key={proc.pid}><span>{proc.name} · PID {proc.pid}<small>CPU {proc.cpu_percent.toFixed(1)} % · RAM {proc.memory_percent.toFixed(1)} %</small></span><b>{formatBytes(proc.memory_bytes)}</b></div>)}
+            <h3>Inventaire du workspace</h3>
             {resources.workspace.files.map(file => <div className="file" key={file.path}><span>{file.path}</span><small>{formatBytes(file.size)}</small></div>)}
-            <p className="securitynote"><ShieldCheck size={15} /> Aucun contrôle arbitraire des processus ; inventaire limité au workspace.</p>
+            <p className="subtle">{resources.platform} · Python {resources.python} · PID backend {resources.pid} · Mesure {new Date(resources.sampled_at).toLocaleTimeString('fr-FR')}</p>
+            <p className="securitynote"><ShieldCheck size={15} /> GPU non mesuré. Les processus affichés sont informatifs : Automaton ne contrôle pas arbitrairement les processus du système.</p>
           </>}
           <button className="secondary" onClick={() => void refreshResources()}>Actualiser les ressources</button>
         </section>}
