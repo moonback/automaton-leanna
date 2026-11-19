@@ -266,7 +266,7 @@ def retry_objective_step(objective_id, step_id):
         cur=c.execute("""UPDATE objective_steps SET status='pending',task_id=NULL,error='',
                          updated_at=CURRENT_TIMESTAMP WHERE id=? AND objective_id=? AND status='failed'""",
                       (step_id,objective_id))
-        if cur.rowcount: c.execute("UPDATE objectives SET status='active',updated_at=CURRENT_TIMESTAMP WHERE id=?",(objective_id,))
+        if cur.rowcount: c.execute("UPDATE objectives SET status='active',supervisor_state='monitoring',updated_at=CURRENT_TIMESTAMP WHERE id=?",(objective_id,))
         return cur.rowcount > 0
 
 def objective_supervision_candidates(interval_seconds=60):
