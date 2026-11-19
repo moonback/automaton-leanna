@@ -41,7 +41,8 @@ export default function App() {
   const [prompt, setPrompt] = useState('');
   const [taskPrompt, setTaskPrompt] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [objectives, setObjectives] = useState<Objective[]>([]);\n  const [objectiveEvents, setObjectiveEvents] = useState<Record<number, {id:number;event_type:string;message:string;created_at:string}[]>>({});
+  const [objectives, setObjectives] = useState<Objective[]>([]);
+  const [objectiveEvents, setObjectiveEvents] = useState<Record<number, {id:number;event_type:string;message:string;created_at:string}[]>>({});
   const [goalTitle, setGoalTitle] = useState('');
   const [goalDescription, setGoalDescription] = useState('');
   const [goalPriority, setGoalPriority] = useState(3);
@@ -342,7 +343,9 @@ export default function App() {
         {page === 'improvements' && <section className="panel">
           <div className="panelintro"><GitBranch /><div><h2>Application de patch Git</h2><p>Le moteur applique un diff unifié au backend local, compile le code et annule le patch si la compilation échoue.</p></div></div>
           <div className="warning"><ShieldCheck size={17} /><span>Fonction désactivée par défaut. Elle exige AUTO_IMPROVE_ENABLED=true, un dépôt Git propre et un patch limité à backend/app/. Le patch appliqué n’est pas automatiquement commité.</span></div>
-          <label>Patch unifié<textarea className="patcharea" rows={15} value={patch} onChange={e => setPatch(e.target.value)} placeholder={'diff --git a/backend/app/... b/backend/app/...\n--- a/backend/app/...\n+++ b/backend/app/...'} /></label>
+          <label>Patch unifié<textarea className="patcharea" rows={15} value={patch} onChange={e => setPatch(e.target.value)} placeholder={'diff --git a/backend/app/... b/backend/app/...
+--- a/backend/app/...
++++ b/backend/app/...'} /></label>
           <button className="primary" disabled={busy || !patch.trim()} onClick={() => void applyPatch()}><GitBranch size={15} /> {busy ? 'Validation…' : 'Valider et appliquer le patch'}</button>
         </section>}
         <footer><Zap size={13} /> Automaton · Exécution locale · Clés API conservées côté backend</footer>
