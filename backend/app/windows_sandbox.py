@@ -1,8 +1,7 @@
 """Windows Sandbox launcher for scripts that need an OS security boundary.
 
-The guest has networking, clipboard and vGPU disabled. Only the script's
-parent folder and the Python runtime are mounted read-only; a per-run folder
-is the sole writable host mapping and contains only runner/output artifacts.
+Networking, clipboard and vGPU are disabled. The script directory and Python
+runtime are read-only; a unique output directory is the only writable mapping.
 """
 import os
 import shutil
@@ -11,10 +10,9 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from .config import DATA
-
 SANDBOX_WORKSPACE = r"C:\AutomatonWorkspace"
 SANDBOX_PYTHON = r"C:\AutomatonPython"
+SANDBOX_VENV = r"C:\AutomatonVenv"
 SANDBOX_OUTPUT = r"C:\AutomatonOutput"
 
 
@@ -36,8 +34,7 @@ def _sandbox_executable():
 
 
 def _python_runtime():
-    # Use the base interpreter inside the guest. A venv's pyvenv.cfg contains
-    # host-absolute paths, so mount its site-packages separately instead.
+    # Use the base interpreter: a venv's pyvenv.cfg contains host-absolute paths.
     base = Path(sys.base_prefix).resolve()
     executable = base / "python.exe"
     if not executable.is_file() or not (base / "Lib").is_dir():
@@ -46,10 +43,11 @@ def _python_runtime():
     site_packages = venv / "Lib" / "site-packages" if venv else None
     if site_packages and not site_packages.is_dir():
         site_packages = None
+        venv = None
     return base, executable.name, venv, site_packages
 
 
-def _write_config(config_path, workspace, runtime, output):
+def _write_config(config_path, workspace, runtime, output, venv=None):
     root = ET.Element("Configuration")
     ET.SubElement(root, "vGPU").text = "Disable"
     ET.SubElement(root, "Networking").text = "Disable"
@@ -57,12 +55,14 @@ def _write_config(config_path, workspace, runtime, output):
     ET.SubElement(root, "ProtectedClient").text = "Enable"
     ET.SubElement(root, "MemoryInMB").text = "2048"
     folders = ET.SubElement(root, "MappedFolders")
-    for host, guest, readonly in (
+    mappings = [
         (workspace, SANDBOX_WORKSPACE, True),
         (runtime, SANDBOX_PYTHON, True),
-        *(([(venv, r"C:\\AutomatonVenv", True)] if venv else [])),
-        (output, SANDBOX_OUTPUT, False),
-    ):
+    ]
+    if venv:
+        mappings.append((venv, SANDBOX_VENV, True))
+    mappings.append((output, SANDBOX_OUTPUT, False))
+    for host, guest, readonly in mappings:
         entry = ET.SubElement(folders, "MappedFolder")
         ET.SubElement(entry, "HostFolder").text = str(host)
         ET.SubElement(entry, "SandboxFolder").text = guest
@@ -75,22 +75,36 @@ def _write_config(config_path, workspace, runtime, output):
     ET.ElementTree(root).write(config_path, encoding="utf-8", xml_declaration=True)
 
 
-def start(script, output_dir, log_path):
-    """Launch a dedicated Windows Sandbox instance; return its host process."""
+def start(script, output_dir):
+    """Launch a dedicated Windows Sandbox instance and return host process + paths."""
     executable = _sandbox_executable()
     runtime, python_name, venv, site_packages = _python_runtime()
     script = Path(script).resolve()
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    log_path = Path(log_path).resolve()
+    log_path = output_dir / "process.log"
     exit_path = output_dir / "exit-code.txt"
     runner_path = output_dir / "run.ps1"
-    python_guest = str(Path(SANDBOX_PYTHON) / python_relative.as_posix()).replace("/", "\\")
-    script_guest = str(Path(SANDBOX_WORKSPACE) / script.name).replace("/", "\\")
+    python_guest = str(Path(SANDBOX_PYTHON) / python_name)
+    script_guest = str(Path(SANDBOX_WORKSPACE) / script.name)
+
+    if site_packages:
+        guest_site = str(Path(SANDBOX_VENV) / "Lib" / "site-packages")
+        bootstrap = (
+            "import sys,runpy; "
+            f"sys.path.insert(0,{guest_site!r}); "
+            f"sys.argv=[{script_guest!r}]; "
+            f"runpy.run_path({script_guest!r},run_name='__main__')"
+        )
+        invocation = f"& {_powershell_literal(python_guest)} -I -B -c {_powershell_literal(bootstrap)}"
+    else:
+        invocation = (
+            f"& {_powershell_literal(python_guest)} -I -B "
+            f"{_powershell_literal(script_guest)}"
+        )
     runner = (
         "$ErrorActionPreference = 'Continue'\n"
-        f"& {_powershell_literal(python_guest)} -I -B {_powershell_literal(script_guest)} "
-        f"*> {_powershell_literal(str(Path(SANDBOX_OUTPUT) / 'process.log'))}\n"
+        f"{invocation} *> {_powershell_literal(str(Path(SANDBOX_OUTPUT) / 'process.log'))}\n"
         "$code = $LASTEXITCODE\n"
         f"Set-Content -LiteralPath {_powershell_literal(str(Path(SANDBOX_OUTPUT) / 'exit-code.txt'))} "
         "-Value $code -NoNewline\n"
@@ -98,10 +112,7 @@ def start(script, output_dir, log_path):
     )
     runner_path.write_text(runner, encoding="utf-8")
     config_path = output_dir.parent / f"{output_dir.name}.wsb"
-    _write_config(config_path, script.parent, runtime, output_dir)
-    # The guest writes to the mapped output folder. The host log endpoint reads
-    # that exact file; no guest-controlled path is accepted.
-    actual_log = output_dir / "process.log"
+    _write_config(config_path, script.parent, runtime, output_dir, venv)
     try:
         process = subprocess.Popen(
             [executable, str(config_path)],
@@ -118,4 +129,4 @@ def start(script, output_dir, log_path):
         except OSError:
             pass
         raise
-    return process, actual_log, exit_path, config_path
+    return process, log_path, exit_path, config_path
