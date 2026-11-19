@@ -57,3 +57,13 @@ OpenRouter is the default: `AI_PROVIDER=openrouter`, `OPENROUTER_API_KEY`, `OPEN
 
 ## Safety
 The agent's file tools are restricted to `backend/workspace/`; Python script execution has a 15-second timeout. The local API must remain bound to localhost and must not be exposed publicly. Never put secrets in the workspace or commit `.env`, virtual environments, SQLite databases or Python bytecode. If a real API key was ever committed, revoke it: deleting it in a later commit does not remove it from Git history.
+
+
+## Vérification indépendante des résultats (0.8.0)
+- `POST /verification/workspace` accepte de 1 à 50 contrôles explicites, exécutés en lecture seule dans le workspace.
+- Contrôles disponibles : `exists` (présence), `contains` (texte attendu), `sha256` (empreinte exacte), `changed_since` (comparaison avec une empreinte de référence) et `python_syntax` (compilation syntaxique sans exécuter le script).
+- Exemple : `{"checks":[{"kind":"exists","path":"rapport.md"},{"kind":"contains","path":"rapport.md","text":"Conclusion"},{"kind":"python_syntax","path":"script.py"}]}`. La réponse donne le nombre de contrôles réussis/échoués, un résultat par contrôle et l'empreinte SHA-256 observée.
+- Les chemins absolus, traversées hors workspace, contrôles inconnus et fichiers de plus de 2 Mo sont refusés. Aucun code arbitraire n'est exécuté.
+- Tests unitaires standard-library : `cd backend && python -m unittest discover -s tests -v`.
+- GitHub Actions exécute les tests backend sur Ubuntu et Windows, puis construit l'interface avec `npm ci && npm run build`.
+- Limite importante : cette première version fournit des contrôles déterministes sur les artefacts du workspace. Elle ne certifie pas encore automatiquement les effets externes (réseau, processus, services) et ne remplace pas les critères d'acceptation propres à chaque objectif.
