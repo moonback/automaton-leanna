@@ -33,6 +33,15 @@ class ExternalVerificationTests(unittest.TestCase):
         ])
         self.assertEqual(len(checks), 2)
         self.assertEqual(checks[0]["expected_status"], 200)
+        self.assertFalse(checks[0]["must_transition"])
+        transitioned = normalize_checks([{
+            "kind": "tcp_port_open", "host": "127.0.0.1", "port": 8000, "must_transition": True
+        }])
+        self.assertTrue(transitioned[0]["must_transition"])
+        with self.assertRaises(ValueError):
+            normalize_checks([{
+                "kind": "tcp_port_open", "host": "127.0.0.1", "port": 8000, "must_transition": "yes"
+            }])
 
     def test_rejects_non_loopback_and_unsafe_urls(self):
         for url in ("https://127.0.0.1/health", "http://example.com/", "http://user@127.0.0.1/"):
@@ -63,6 +72,7 @@ class ExternalVerificationTests(unittest.TestCase):
         try:
             result = verify_external_checks([{"kind": "tcp_port_open", "host": "127.0.0.1", "port": port}])
             self.assertTrue(result["success"])
+            self.assertTrue(result["checks"][0]["observed_open"])
         finally:
             listener.close()
 
@@ -73,6 +83,7 @@ class ExternalVerificationTests(unittest.TestCase):
         probe.close()
         result = verify_external_checks([{"kind": "tcp_port_open", "host": "127.0.0.1", "port": port}])
         self.assertFalse(result["success"])
+        self.assertFalse(result["checks"][0]["observed_open"])
 
 
 if __name__ == "__main__":
