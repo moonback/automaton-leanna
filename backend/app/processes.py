@@ -37,6 +37,7 @@ def init():
         for job in _JOB_HANDLES.values():
             windows_job.close_job(job)
         _JOB_HANDLES.clear()
+    restart_status = "interrupted" if os.name == "nt" else "orphaned"
     with db.connect() as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS managed_processes (
             id INTEGER PRIMARY KEY,
@@ -50,9 +51,9 @@ def init():
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             stopped_at DATETIME
         )""")
-        conn.execute("""UPDATE managed_processes SET status='orphaned',
-            updated_at=CURRENT_TIMESTAMP
-            WHERE status IN ('starting','running','stopping')""")
+        conn.execute("""UPDATE managed_processes SET status=?,
+            updated_at=CURRENT_TIMESTAMP,stopped_at=CURRENT_TIMESTAMP
+            WHERE status IN ('starting','running','stopping')""", (restart_status,))
 
 
 def _record(process_id):
