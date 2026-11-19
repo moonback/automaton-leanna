@@ -88,29 +88,72 @@ def start(script, output_dir):
     python_guest = str(Path(SANDBOX_PYTHON) / python_name)
     script_guest = str(Path(SANDBOX_WORKSPACE) / script.name)
 
-    if site_packages:
-        guest_site = str(Path(SANDBOX_VENV) / "Lib" / "site-packages")
-        bootstrap = (
-            "import sys,runpy; "
-            f"sys.path.insert(0,{guest_site!r}); "
-            f"sys.argv=[{script_guest!r}]; "
-            f"runpy.run_path({script_guest!r},run_name='__main__')"
-        )
-        invocation = f"& {_powershell_literal(python_guest)} -I -B -c {_powershell_literal(bootstrap)}"
-    else:
-        invocation = (
-            f"& {_powershell_literal(python_guest)} -I -B "
-            f"{_powershell_literal(script_guest)}"
-        )
-    runner = (
-        "$ErrorActionPreference = 'Continue'\n"
-        f"{invocation} 2>&1 | Out-File -FilePath {_powershell_literal(str(Path(SANDBOX_OUTPUT) / 'process.log'))} -Encoding utf8\n"
-        "$code = $LASTEXITCODE\n"
-        f"Set-Content -LiteralPath {_powershell_literal(str(Path(SANDBOX_OUTPUT) / 'exit-code.txt'))} "
-        "-Value $code -NoNewline\n"
-        "exit $code\n"
+    guest_site = str(Path(SANDBOX_VENV) / "Lib" / "site-packages") if site_packages else None
+    guest_log = str(Path(SANDBOX_OUTPUT) / "process.log")
+    guest_exit = str(Path(SANDBOX_OUTPUT) / "exit-code.txt")
+    runner_source = f"""
+import runpy, site, sys, traceback
+script_path = {script_guest!r}
+log_path = {guest_log!r}
+exit_path = {guest_exit!r}
+site_packages = {guest_site!r}
+if site_packages:
+    site.addsitedir(site_packages)
+class LimitedWriter:
+    encoding = "utf-8"
+    errors = "replace"
+    def __init__(self, stream, limit):
+        self.stream, self.limit, self.written, self.truncated = stream, limit, 0, False
+        self.buffer = self
+    def write(self, value):
+        data = value if isinstance(value, bytes) else str(value).encode("utf-8", errors="replace")
+        remaining = max(0, self.limit - self.written)
+        if remaining:
+            chunk = data[:remaining]
+            self.stream.write(chunk)
+            self.written += len(chunk)
+        if len(data) > remaining:
+            self.truncated = True
+        return len(value)
+    def flush(self): self.stream.flush()
+    def isatty(self): return False
+    def writable(self): return True
+    def fileno(self): return self.stream.fileno()
+    def writelines(self, lines):
+        for line in lines: self.write(line)
+code = 0
+with open(log_path, "wb") as output:
+    writer = LimitedWriter(output, 2 * 1024 * 1024 - 64)
+    sys.stdout = writer
+    sys.stderr = writer
+    sys.argv = [script_path]
+    try:
+        runpy.run_path(script_path, run_name="__main__")
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+    except BaseException:
+        traceback.print_exc(file=writer)
+        code = 1
+    finally:
+        if writer.truncated:
+            output.write(b"\\n[Automaton: output truncated at 2 MiB]\\n")
+        output.flush()
+with open(exit_path, "w", encoding="ascii") as result:
+    result.write(str(code))
+sys.exit(code)
+"""
+    runner_path.write_text(runner_source, encoding="utf-8")
+    powershell_path = output_dir / "run.ps1"
+    powershell_path.write_text(
+        "$ErrorActionPreference = 'Continue'\\n"
+        f"& {_powershell_literal(str(Path(SANDBOX_PYTHON) / python_name))} -I -B "
+        f"{_powershell_literal(str(Path(SANDBOX_OUTPUT) / 'runner.py'))}\\n"
+        "$code = $LASTEXITCODE\\n"
+        f"if (-not (Test-Path {_powershell_literal(guest_exit)})) {{ "
+        f"Set-Content -LiteralPath {_powershell_literal(guest_exit)} -Value $code -NoNewline }}\\n"
+        "exit $code\\n",
+        encoding="utf-8"
     )
-    runner_path.write_text(runner, encoding="utf-8")
     config_path = output_dir.parent / f"{output_dir.name}.wsb"
     _write_config(config_path, script.parent, runtime, output_dir, venv)
     try:
