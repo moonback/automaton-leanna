@@ -53,8 +53,9 @@ async def plan_steps(title: str, description: str):
     prompt = (
         "Décompose l'objectif en 2 à 12 étapes concrètes, ordonnées et vérifiables. "
         "Chaque étape doit produire un résultat vérifiable. Pour les fichiers, utilise le workspace. "
-        "Pour vérifier un service local réellement démarré, tu peux utiliser http_status {kind,url,expected_status} "
-        "ou tcp_port_open {kind,host,port,timeout_ms}. Ces contrôles réseau sont limités à localhost/127.0.0.1/::1. "
+        "Pour vérifier un service local réellement démarré, utilise http_status {kind,url,expected_status,must_transition} "
+        "ou tcp_port_open {kind,host,port,timeout_ms,must_transition}. Pour un service qui doit être démarré par cette étape, mets must_transition=true. "
+        "Ces contrôles réseau sont limités à localhost/127.0.0.1/::1. "
         "Les contrôles de fichiers autorisés sont exists {kind,path}, contains {kind,path,text}, python_syntax {kind,path}. "
         "Les chemins doivent être relatifs au workspace. Ne prétends pas qu'un résultat existe déjà. "
         "N'utilise un contrôle réseau que si la tâche exige réellement un service local. "
