@@ -252,7 +252,7 @@ export default function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand"><div className="logo"><Bot /></div><div><b>Automaton</b><small>LOCAL AGENT · 1.3.0</small></div></div>
+        <div className="brand"><div className="logo"><Bot /></div><div><b>Automaton</b><small>LOCAL AGENT · 1.4.0</small></div></div>
         <div className="navgroup">{nav.map(item => {
           const Icon = item.icon;
           return <button key={item.id} className={`nav ${page === item.id ? 'active' : ''}`} onClick={() => { setPage(item.id); setError(''); setNotice(''); }}>
@@ -403,7 +403,7 @@ export default function App() {
                 <option value="admin">Admin · toutes les capacités, approbation maintenue</option>
               </select>
             </label>
-            <div className="warning"><ShieldCheck size={17}/><span>Refus par défaut. run_python, start_process et stop_process exigent une approbation ponctuelle, même en profil Admin. Le profil Sandbox Execution lance les processus gérés via Windows Sandbox ; la disponibilité dépend de Windows. Le profil de permission ne remplace pas l'isolation système.</span></div>
+            <div className="warning"><ShieldCheck size={17}/><span>Refus par défaut. start_process et stop_process exigent une approbation ponctuelle, même en profil Admin. run_python reste réservé au profil Admin et utilise un sous-processus contraint, pas une frontière OS. Le profil Sandbox Execution lance les processus gérés via Windows Sandbox ; la disponibilité dépend de Windows. Le profil de permission ne remplace pas l'isolation système.</span></div>
           </>}
           <div className="tasktoolbar"><h3>Demandes d'approbation ({permissionRequests.filter(x=>x.status==='pending').length})</h3><button className="secondary" onClick={()=>void refreshPermissions()}>Actualiser</button></div>
           {permissionRequests.length ? permissionRequests.map(item=><article className="taskrow" key={item.id}>
