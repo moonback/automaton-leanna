@@ -13,7 +13,8 @@ type HeartbeatConfig = { enabled: number; interval_seconds: number; prompt: stri
 type ResourceSnapshot = {
   platform: string; python: string; pid: number;
   workspace: { file_count: number; total_bytes: number; files: { path: string; size: number }[] };
-  storage: { total_bytes: number; free_bytes: number };\n  system: { cpu_percent: number; memory_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_percent: number; network_sent_bytes: number; network_received_bytes: number; gpu_available: boolean };
+  storage: { total_bytes: number; free_bytes: number };
+  system: { cpu_percent: number; memory_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_percent: number; network_sent_bytes: number; network_received_bytes: number; gpu_available: boolean };
 };
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
@@ -197,7 +198,8 @@ export default function App() {
   }
 
   const nav: { id: Page; label: string; icon: typeof Bot }[] = [
-    { id: 'overview', label: 'Vue d’ensemble', icon: Gauge },\n    { id: 'agent', label: 'Agent', icon: Bot },
+    { id: 'overview', label: 'Vue d’ensemble', icon: Gauge },
+    { id: 'agent', label: 'Agent', icon: Bot },
     { id: 'tasks', label: 'File de tâches', icon: ListTodo },
     { id: 'objectives', label: 'Objectifs', icon: Target },
     { id: 'heartbeat', label: 'Heartbeat', icon: Activity },
