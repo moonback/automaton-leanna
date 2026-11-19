@@ -6,7 +6,7 @@ import {
 
 const API = 'http://127.0.0.1:8765';
 type Message = { role: 'user' | 'assistant'; content: string };
-type Page = 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resources' | 'agents' | 'improvements';
+type Page = 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resources' | 'processes' | 'agents' | 'improvements';
 type Memory = { id: number; content: string; tags: string; importance: number; created_at: string };
 type HeartbeatRun = { id: number; status: string; summary: string; error: string; started_at: string };
 type HeartbeatConfig = { enabled: number; interval_seconds: number; prompt: string };
@@ -18,6 +18,7 @@ type ResourceSnapshot = {
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
 type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
+type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string; stopped_at:string|null; isolation_profile:string; security_boundary:string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -41,6 +42,10 @@ export default function App() {
   const [prompt, setPrompt] = useState('');
   const [taskPrompt, setTaskPrompt] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [managedProcesses, setManagedProcesses] = useState<ManagedProcess[]>([]);
+  const [processPath, setProcessPath] = useState('');
+  const [selectedProcess, setSelectedProcess] = useState<number | null>(null);
+  const [processLog, setProcessLog] = useState('');
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [objectiveEvents, setObjectiveEvents] = useState<Record<number, {id:number;event_type:string;message:string;details?:string;created_at:string}[]>>({});
   const [objectiveRevisions, setObjectiveRevisions] = useState<Record<number, {id:number;revision:number;reason:string;plan_json:string;created_at:string}[]>>({});
@@ -88,16 +93,17 @@ export default function App() {
   }
   async function refreshResources() { setResources(await request<ResourceSnapshot>('/resources')); }
   async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
+  async function refreshProcesses() { const data = await request<{ processes: ManagedProcess[] }>('/processes'); setManagedProcesses(data.processes); }
   async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); const details = await Promise.all(data.objectives.map(item => request<Objective>(`/objectives/${item.id}`))); setObjectives(details); }
   async function refreshAll() {
     setError('');
     await refreshBase();
-    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks(), refreshObjectives()]); }
+    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks(), refreshObjectives(), refreshProcesses()]); }
     catch (e) { setError(e instanceof Error ? e.message : 'Erreur de chargement'); }
   }
   useEffect(() => {
     void refreshAll();
-    const id = window.setInterval(() => { void refreshBase(); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); }, 3000);
+    const id = window.setInterval(() => { void refreshBase(); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); void refreshProcesses().catch(() => {}); }, 3000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -152,6 +158,35 @@ export default function App() {
     try { await request(`/tasks/${id}`, { method: 'DELETE' }); await refreshTasks(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Annulation impossible'); }
   }
+
+  async function startManagedProcess() {
+    const path = processPath.trim();
+    if (!path) return;
+    setError(''); setNotice('');
+    try {
+      const item = await request<ManagedProcess>('/processes', { method:'POST', body:JSON.stringify({path}) });
+      setProcessPath('');
+      setSelectedProcess(item.id);
+      await refreshProcesses();
+      setNotice(`Processus #${item.id} démarré (PID ${item.pid}).`);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Démarrage impossible'); }
+  }
+  async function stopManagedProcess(id:number) {
+    if (!window.confirm(`Arrêter le processus #${id} et ses enfants ?`)) return;
+    try {
+      await request(`/processes/${id}`, {method:'DELETE'});
+      await refreshProcesses();
+      if (selectedProcess === id) await loadProcessLog(id);
+      setNotice(`Demande d'arrêt envoyée au processus #${id}.`);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Arrêt impossible'); }
+  }
+  async function loadProcessLog(id:number) {
+    try {
+      const data = await request<{process:ManagedProcess;log:string}>(`/processes/${id}/logs`);
+      setSelectedProcess(id); setProcessLog(data.log || '');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Journal indisponible'); }
+  }
+
   async function saveMemory() {
     if (!memoryText.trim()) return;
     setError(''); setNotice('');
@@ -203,12 +238,13 @@ export default function App() {
     { id: 'heartbeat', label: 'Heartbeat', icon: Activity },
     { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'resources', label: 'Ressources', icon: Gauge },
+    { id: 'processes', label: 'Processus', icon: Cpu },
     { id: 'agents', label: 'Multi-agents', icon: Users },
     { id: 'improvements', label: 'Auto-amélioration', icon: GitBranch }
   ];
   const titles: Record<Page, string> = {
     agent: 'Agent', tasks: 'File de tâches persistantes', objectives: 'Objectifs autonomes', heartbeat: 'Heartbeat', memory: 'Mémoire persistante',
-    resources: 'Gestionnaire de ressources', agents: 'Équipe multi-agents',
+    resources: 'Gestionnaire de ressources', processes: 'Gestionnaire de processus', agents: 'Équipe multi-agents',
     improvements: 'Auto-amélioration'
   };
 
@@ -332,6 +368,25 @@ export default function App() {
             <p className="securitynote"><ShieldCheck size={15} /> Aucun contrôle arbitraire des processus ; inventaire limité au workspace.</p>
           </>}
           <button className="secondary" onClick={() => void refreshResources()}>Actualiser les ressources</button>
+        </section>}
+
+
+        {page === 'processes' && <section className="panel">
+          <div className="panelintro"><Cpu /><div><h2>Processus gérés par Automaton</h2><p>Démarre uniquement des scripts Python déjà présents dans le workspace. Les processus, PID, états et journaux sont suivis dans SQLite.</p></div></div>
+          <div className="warning"><ShieldCheck size={17} /><span>Windows Job Objects appliquent des limites de mémoire, de durée CPU et de nombre de processus, et arrêtent l'arbre à la fermeture du backend. Ce mécanisme n'est pas AppContainer : le code conserve les droits fichiers et réseau du compte Windows.</span></div>
+          <label>Script Python du workspace<input value={processPath} onChange={e=>setProcessPath(e.target.value)} placeholder="workers/worker.py" /></label>
+          <button className="primary" disabled={!processPath.trim()} onClick={()=>void startManagedProcess()}><Play size={15}/> Démarrer le processus</button>
+          <div className="tasktoolbar"><h3>Processus suivis ({managedProcesses.length})</h3><button className="secondary" onClick={()=>void refreshProcesses()}>Actualiser</button></div>
+          {managedProcesses.length ? managedProcesses.map(item=><article className="taskrow" key={item.id}>
+            <div className="taskmeta"><b>#{item.id} · PID {item.pid}</b><span className={`statuspill ${item.status}`}>{item.status}</span><small>{item.isolation_profile}</small></div>
+            <p>{item.script}</p>
+            <small className="processmeta">Démarré : {item.started_at} · Code de sortie : {item.exit_code ?? '—'}</small>
+            <div className="tasktoolbar">
+              <button className="secondary" onClick={()=>void loadProcessLog(item.id)}>Voir les journaux</button>
+              {item.status === 'running' || item.status === 'stopping' ? <button className="dangericon" onClick={()=>void stopManagedProcess(item.id)}>Arrêter</button> : null}
+            </div>
+          </article>) : <p className="empty">Aucun processus géré.</p>}
+          {selectedProcess !== null && <section className="processlogs"><div className="tasktoolbar"><h3>Journal · processus #{selectedProcess}</h3><button className="secondary" onClick={()=>void loadProcessLog(selectedProcess)}>Recharger</button></div><pre>{processLog || 'Aucune sortie enregistrée.'}</pre></section>}
         </section>}
 
         {page === 'agents' && <section className="panel">
