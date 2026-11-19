@@ -295,14 +295,22 @@ def record_supervision(objective_id, decision, note, new_steps=None):
                 new_steps=[]
             elif decision=="replan":
                 failed=[row for row in rows if row["status"]=="failed"]
-                for row in failed:
-                    c.execute("""UPDATE objective_steps SET status='skipped',updated_at=CURRENT_TIMESTAMP
-                                 WHERE id=?""",(row["id"],))
-                for step in new_steps:
-                    position=len(rows)+1
+                if failed:
+                    failed_position=min(row["position"] for row in failed)
+                    for row in failed:
+                        c.execute("""UPDATE objective_steps SET status='skipped',updated_at=CURRENT_TIMESTAMP
+                                     WHERE id=?""",(row["id"],))
+                    c.execute("UPDATE objective_steps SET position=position+1000 WHERE objective_id=? AND position>?",
+                              (objective_id,failed_position))
+                    c.execute("UPDATE objective_steps SET position=position-1000+? WHERE objective_id=? AND position>=1000",
+                              (len(new_steps),objective_id))
+                    insert_position=failed_position+1
+                else:
+                    insert_position=len(rows)+1
+                for offset,step in enumerate(new_steps):
                     c.execute("""INSERT INTO objective_steps(objective_id,position,title,description)
-                                 VALUES(?,?,?,?)""",(objective_id,position,step["title"],step["description"]))
-                    rows.append({"position":position,"title":step["title"],"description":step["description"]})
+                                 VALUES(?,?,?,?)""",(objective_id,insert_position+offset,step["title"],step["description"]))
+                rows=c.execute("SELECT * FROM objective_steps WHERE objective_id=? ORDER BY position",(objective_id,)).fetchall()
                 snapshot=[{"title":row["title"],"description":row["description"]} for row in rows]
                 c.execute("INSERT INTO objective_revisions(objective_id,revision,reason,plan_json) VALUES(?,?,?,?)",
                           (objective_id,current_revision+1,"Adaptation supervisée",json.dumps(snapshot,ensure_ascii=False)))
