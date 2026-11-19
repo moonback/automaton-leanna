@@ -26,6 +26,18 @@ class ObjectiveAcceptanceCheckTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_checks([{"kind": "contains", "path": "report.md"}])
 
+    def test_accepts_loopback_external_checks(self):
+        checks = normalize_checks([
+            {"kind": "http_status", "url": "http://127.0.0.1:8000/health", "expected_status": 200},
+            {"kind": "tcp_port_open", "host": "localhost", "port": 8000},
+        ])
+        self.assertEqual(checks[0]["kind"], "http_status")
+        self.assertEqual(checks[1]["kind"], "tcp_port_open")
+
+    def test_rejects_public_network_checks_in_objective_plan(self):
+        with self.assertRaises(ValueError):
+            normalize_checks([{"kind": "http_status", "url": "http://example.com/"}])
+
 
 if __name__ == "__main__":
     unittest.main()
