@@ -92,7 +92,7 @@ async def run_agent(prompt: str):
                         raise ValueError(f"Outil inconnu : {name}")
                     result = permissions.dispatch(name, args, execute_tool)
                     content = json.dumps(result, ensure_ascii=False)
-                    action_ok = not (name == "run_python" and isinstance(result, dict) and result.get("returncode") != 0)
+                    action_ok = not (isinstance(result, dict) and (result.get("status") == "approval_required" or result.get("error"))) and not (name == "run_python" and isinstance(result, dict) and result.get("returncode") != 0)
                     tool_trace.append({"tool":name,"arguments_summary":permissions._summary(args),"result":result,"success":action_ok})
                 except Exception as exc:
                     content = json.dumps({"error":str(exc)}, ensure_ascii=False)
