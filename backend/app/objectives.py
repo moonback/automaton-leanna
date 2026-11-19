@@ -123,8 +123,9 @@ async def worker():
                     await supervise_objective(objective_id)
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception as exc:
                     log.exception("Objective %s supervision failed",objective_id)
+                    db.record_supervision_error(objective_id,exc)
             for objective in db.list_objectives(100):
                 if objective["status"]!="active" or objective.get("supervisor_state")=="blocked":
                     continue
