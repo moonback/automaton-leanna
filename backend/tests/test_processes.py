@@ -1,3 +1,4 @@
+import os
 import tempfile
 import time
 import unittest
@@ -40,16 +41,26 @@ class ManagedProcessTests(unittest.TestCase):
         self.assertEqual(stopped["status"], "exited")
         self.assertIsNone(processes.stop(99999))
 
-    def test_restart_marks_running_process_orphaned_without_killing(self):
+    def test_restart_marks_running_process_and_applies_platform_cleanup(self):
         record = processes.start("worker.py")
         process = processes._HANDLES[record["id"]]
         processes.init()
         current = processes.get_process(record["id"])
-        self.assertEqual(current["status"], "orphaned")
+        expected = "interrupted" if os.name == "nt" else "orphaned"
+        self.assertEqual(current["status"], expected)
         self.assertIsNone(processes._HANDLES.get(record["id"]))
-        # The test owns this process handle; clean it up directly.
-        process.terminate()
-        process.wait(timeout=3)
+        if os.name == "nt":
+            process.wait(timeout=3)
+            self.assertIsNotNone(process.poll())
+        else:
+            # POSIX fallback does not own a persistent OS job object.
+            process.terminate()
+            process.wait(timeout=3)
+
+    @unittest.skipUnless(os.name != "nt", "Windows Sandbox is Windows-only")
+    def test_windows_sandbox_mode_is_rejected_on_non_windows(self):
+        with self.assertRaises(ValueError):
+            processes.start("worker.py", isolation="windows_sandbox")
 
 
 if __name__ == "__main__":

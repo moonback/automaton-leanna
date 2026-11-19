@@ -59,6 +59,7 @@ def safe_environment():
 def run_script(relative_path, timeout=DEFAULT_TIMEOUT):
     import signal
     import threading
+    from . import windows_job
 
     script = resolve_script(relative_path)
     if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= MAX_TIMEOUT:
@@ -72,7 +73,7 @@ def run_script(relative_path, timeout=DEFAULT_TIMEOUT):
         "shell": False,
     }
     if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        kwargs["creationflags"] = windows_job.CREATE_SUSPENDED | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
         kwargs["preexec_fn"] = _limits()
@@ -89,6 +90,16 @@ def run_script(relative_path, timeout=DEFAULT_TIMEOUT):
                 del captured[key][:-MAX_OUTPUT_CHARS * 4]
 
     process = subprocess.Popen(command, **kwargs)
+    job = None
+    if os.name == "nt":
+        try:
+            job = windows_job.create_job_for_suspended_process(
+                process, memory_bytes=MAX_MEMORY_BYTES, cpu_seconds=timeout, max_processes=16
+            )
+        except Exception:
+            process.kill()
+            process.wait()
+            raise
     readers = [
         threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
         threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True),
@@ -102,9 +113,9 @@ def run_script(relative_path, timeout=DEFAULT_TIMEOUT):
         timed_out = True
         try:
             if os.name == "nt":
-                killed = subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                                        capture_output=True, timeout=5, check=False)
-                if killed.returncode != 0:
+                if job:
+                    windows_job.terminate_job(job)
+                else:
                     process.kill()
             else:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -113,6 +124,8 @@ def run_script(relative_path, timeout=DEFAULT_TIMEOUT):
         process.wait()
     for reader in readers:
         reader.join(timeout=2)
+    if job:
+        windows_job.close_job(job)
 
     return {
         "returncode": process.returncode if not timed_out else -1,
@@ -120,5 +133,5 @@ def run_script(relative_path, timeout=DEFAULT_TIMEOUT):
         "stderr": bytes(captured["stderr"])[-MAX_OUTPUT_CHARS:].decode("utf-8", errors="replace"),
         "timed_out": timed_out,
         "execution_profile": "restricted_subprocess",
-        "isolation_guarantee": "resource_limits_only",
+        "isolation_guarantee": "windows_job_object_resource_containment" if os.name == "nt" else "posix_resource_limits",
     }

@@ -38,8 +38,9 @@ async def lifespan(app: FastAPI):
         await heartbeat_task
     except asyncio.CancelledError:
         pass
+    processes.shutdown()
 
-app = FastAPI(title="Automaton Local API", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="Automaton Local API", version="1.4.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "file://"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -70,13 +71,14 @@ class ObjectiveRequest(BaseModel):
 
 class ProcessStartRequest(BaseModel):
     path: str = Field(min_length=1, max_length=500)
+    isolation: str = Field(default="job_object", max_length=40)
 
 class TeamRequest(BaseModel):
     task: str = Field(min_length=1, max_length=12000)
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "1.1.0"}
+    return {"status": "ok", "version": "1.4.0"}
 
 @app.get("/config")
 def public_config():
@@ -132,7 +134,7 @@ def process_list(limit: int = 50):
 @app.post("/processes", status_code=201)
 def process_start(req: ProcessStartRequest):
     try:
-        return processes.start(req.path)
+        return processes.start(req.path, req.isolation)
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -158,13 +160,29 @@ def process_stop(process_id: int):
     record = processes.stop(process_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Processus introuvable")
-    if record["status"] == "orphaned":
-        raise HTTPException(status_code=409, detail="Processus démarré avant le dernier redémarrage : arrêt manuel requis pour éviter un risque de PID réutilisé.")
+    if record["status"] in {"orphaned", "interrupted"}:
+        raise HTTPException(status_code=409, detail="Ce processus n'est plus contrôlable depuis cette session backend.")
     return record
+
+class ResourceSettingsRequest(BaseModel):
+    cpu_warning: float = Field(ge=1, le=100)
+    memory_warning: float = Field(ge=1, le=100)
+    disk_warning: float = Field(ge=1, le=100)
+
 
 @app.get("/resources")
 def resource_snapshot():
-    return resources.snapshot()
+    return resources.snapshot(db.get_resource_settings())
+
+
+@app.get("/resources/settings")
+def resource_settings():
+    return db.get_resource_settings()
+
+
+@app.put("/resources/settings")
+def resource_settings_update(req: ResourceSettingsRequest):
+    return db.set_resource_settings(req.cpu_warning, req.memory_warning, req.disk_warning)
 
 @app.post("/agents/run")
 async def agents_run(req: TeamRequest):

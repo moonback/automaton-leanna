@@ -1,26 +1,32 @@
 import { useEffect, useState } from 'react';
 import {
   Activity, Bot, Brain, Cpu, Folder, Gauge, GitBranch, ListTodo, Play, RefreshCw, Target,
-  Send, Settings, ShieldCheck, Trash2, Users, Zap, CircleCheck, Clock3, HardDrive, MemoryStick, ArrowUpRight
+  Send, Settings, ShieldCheck, Trash2, Users, Zap
 } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8765';
 type Message = { role: 'user' | 'assistant'; content: string };
-type Page = 'overview' | 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resources' | 'agents' | 'improvements';
+type Page = 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resources' | 'processes' | 'agents' | 'improvements';
 type Memory = { id: number; content: string; tags: string; importance: number; created_at: string };
 type HeartbeatRun = { id: number; status: string; summary: string; error: string; started_at: string };
 type HeartbeatConfig = { enabled: number; interval_seconds: number; prompt: string };
+type ResourceSettings = { cpu_warning: number; memory_warning: number; disk_warning: number };
 type ResourceSnapshot = {
-  platform: string; python: string; pid: number;
+  platform: string; python: string; pid: number; sampled_at: string;
+  cpu: { percent: number; logical_cores: number | null; physical_cores: number | null };
+  memory: { total_bytes: number; available_bytes: number; used_bytes: number; percent: number };
+  storage: { total_bytes: number; free_bytes: number; used_bytes: number; percent: number };
+  network: { bytes_sent: number; bytes_received: number; packets_sent: number; packets_received: number } | null;
+  gpu: { available: boolean; reason: string };
+  processes: { pid: number; name: string; cpu_percent: number; memory_percent: number; memory_bytes: number }[];
+  alerts: { metric: string; value: number; threshold: number; message: string }[];
+  settings: ResourceSettings;
   workspace: { file_count: number; total_bytes: number; files: { path: string; size: number }[] };
-  storage: { total_bytes: number; free_bytes: number };
-  system: { cpu_percent: number; memory_percent: number; memory_used_bytes: number; memory_total_bytes: number; disk_percent: number; network_sent_bytes: number; network_received_bytes: number; gpu_available: boolean };
 };
 type AgentResult = { mode: string; agents: Record<string, string> };
 type Objective = { id:number; title:string; description:string; status:string; priority:number; total_steps:number; completed_steps:number; supervisor_state?:string; supervisor_note?:string; supervised_at?:string; steps?: {id:number;position:number;title:string;description:string;status:string;result:string;error:string}[] };
-type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string };
-type ResourcePoint = { at: string; cpu: number; memory: number; disk: number };
 type Task = { id: number; prompt: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'; result: string; error: string; created_at: string; updated_at: string };
+type ManagedProcess = { id:number; pid:number; script:string; status:string; exit_code:number|null; started_at:string; updated_at:string; stopped_at:string|null; isolation:string; isolation_profile:string; security_boundary:string };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -39,11 +45,16 @@ function formatBytes(value: number) {
 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>('overview');
+  const [page, setPage] = useState<Page>('agent');
   const [messages, setMessages] = useState<Message[]>([{ role: 'assistant', content: 'Automaton est prêt. Décris une tâche à accomplir dans son espace de travail.' }]);
   const [prompt, setPrompt] = useState('');
   const [taskPrompt, setTaskPrompt] = useState('');
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [managedProcesses, setManagedProcesses] = useState<ManagedProcess[]>([]);
+  const [processPath, setProcessPath] = useState('');
+  const [processIsolation, setProcessIsolation] = useState<'job_object'|'windows_sandbox'>('windows_sandbox');
+  const [selectedProcess, setSelectedProcess] = useState<number | null>(null);
+  const [processLog, setProcessLog] = useState('');
   const [objectives, setObjectives] = useState<Objective[]>([]);
   const [objectiveEvents, setObjectiveEvents] = useState<Record<number, {id:number;event_type:string;message:string;details?:string;created_at:string}[]>>({});
   const [objectiveRevisions, setObjectiveRevisions] = useState<Record<number, {id:number;revision:number;reason:string;plan_json:string;created_at:string}[]>>({});
@@ -62,20 +73,7 @@ export default function App() {
   const [heartbeat, setHeartbeat] = useState<HeartbeatConfig | null>(null);
   const [heartbeatRuns, setHeartbeatRuns] = useState<HeartbeatRun[]>([]);
   const [resources, setResources] = useState<ResourceSnapshot | null>(null);
-  const [resourceHistory, setResourceHistory] = useState<ResourcePoint[]>([]);
-  const [alertThresholds, setAlertThresholds] = useState(() => {
-    try {
-      const saved = localStorage.getItem('automaton.resourceAlertThresholds');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return { cpu: Math.max(1, Math.min(100, Number(parsed.cpu) || 85)), memory: Math.max(1, Math.min(100, Number(parsed.memory) || 90)), disk: Math.max(1, Math.min(100, Number(parsed.disk) || 90)) };
-      }
-    } catch { /* valeurs par défaut si le stockage local est illisible */ }
-    return { cpu: 85, memory: 90, disk: 90 };
-  });
-  const [managedProcesses, setManagedProcesses] = useState<ManagedProcess[]>([]);
-  const [processScript, setProcessScript] = useState('');
-  const [processLogs, setProcessLogs] = useState<Record<number,string>>({});
+  const [resourceSettings, setResourceSettings] = useState<ResourceSettings>({ cpu_warning: 85, memory_warning: 85, disk_warning: 90 });
   const [teamTask, setTeamTask] = useState('');
   const [teamResult, setTeamResult] = useState<AgentResult | null>(null);
   const [patch, setPatch] = useState('');
@@ -103,30 +101,19 @@ export default function App() {
     const data = await request<{ memories: Memory[] }>('/memory');
     setMemories(data.memories);
   }
-  async function refreshResources() {
-    const snapshot = await request<ResourceSnapshot>('/resources');
-    setResources(snapshot);
-    setResourceHistory(current => [...current, { at: new Date().toLocaleTimeString(), cpu: snapshot.system.cpu_percent, memory: snapshot.system.memory_percent, disk: snapshot.system.disk_percent }].slice(-40));
-  }
-  async function refreshProcesses() { const data=await request<{processes:ManagedProcess[]}>('/processes'); setManagedProcesses(data.processes); }
-  async function startManagedProcess() { if(!processScript.trim()) return; try { await request('/processes',{method:'POST',body:JSON.stringify({path:processScript.trim()})}); setProcessScript(''); await refreshProcesses(); setNotice('Processus démarré.'); } catch(e) { setError(e instanceof Error?e.message:'Démarrage impossible'); } }
-  async function stopManagedProcess(id:number) { try { await request('/processes/'+id,{method:'DELETE'}); await refreshProcesses(); } catch(e) { setError(e instanceof Error?e.message:'Arrêt impossible'); } }
-  async function loadProcessLog(id:number) { try { const data=await request<{log:string}>('/processes/'+id+'/logs'); setProcessLogs(current=>({...current,[id]:data.log})); } catch(e) { setError(e instanceof Error?e.message:'Logs indisponibles'); } }
+  async function refreshResources() { const [snapshot, settings] = await Promise.all([request<ResourceSnapshot>('/resources'), request<ResourceSettings>('/resources/settings')]); setResources(snapshot); setResourceSettings(settings); }
   async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
+  async function refreshProcesses() { const data = await request<{ processes: ManagedProcess[] }>('/processes'); setManagedProcesses(data.processes); }
   async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); const details = await Promise.all(data.objectives.map(item => request<Objective>(`/objectives/${item.id}`))); setObjectives(details); }
   async function refreshAll() {
     setError('');
     await refreshBase();
-    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshProcesses(), refreshTasks(), refreshObjectives()]); }
+    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks(), refreshObjectives(), refreshProcesses()]); }
     catch (e) { setError(e instanceof Error ? e.message : 'Erreur de chargement'); }
   }
   useEffect(() => {
-    try { localStorage.setItem('automaton.resourceAlertThresholds', JSON.stringify(alertThresholds)); } catch { /* stockage local facultatif */ }
-  }, [alertThresholds]);
-
-  useEffect(() => {
     void refreshAll();
-    const id = window.setInterval(() => { void refreshBase(); void refreshResources().catch(() => {}); void refreshProcesses().catch(() => {}); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); }, 3000);
+    const id = window.setInterval(() => { void refreshBase(); void refreshResources().catch(() => {}); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); void refreshProcesses().catch(() => {}); }, 3000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -181,6 +168,35 @@ export default function App() {
     try { await request(`/tasks/${id}`, { method: 'DELETE' }); await refreshTasks(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Annulation impossible'); }
   }
+
+  async function startManagedProcess() {
+    const path = processPath.trim();
+    if (!path) return;
+    setError(''); setNotice('');
+    try {
+      const item = await request<ManagedProcess>('/processes', { method:'POST', body:JSON.stringify({path, isolation:processIsolation}) });
+      setProcessPath('');
+      setSelectedProcess(item.id);
+      await refreshProcesses();
+      setNotice(`Processus #${item.id} démarré (PID hôte ${item.pid}, ${item.isolation_profile}).`);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Démarrage impossible'); }
+  }
+  async function stopManagedProcess(id:number) {
+    if (!window.confirm(`Arrêter le processus #${id} et ses enfants ?`)) return;
+    try {
+      await request(`/processes/${id}`, {method:'DELETE'});
+      await refreshProcesses();
+      if (selectedProcess === id) await loadProcessLog(id);
+      setNotice(`Demande d'arrêt envoyée au processus #${id}.`);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Arrêt impossible'); }
+  }
+  async function loadProcessLog(id:number) {
+    try {
+      const data = await request<{process:ManagedProcess;log:string}>(`/processes/${id}/logs`);
+      setSelectedProcess(id); setProcessLog(data.log || '');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Journal indisponible'); }
+  }
+
   async function saveMemory() {
     if (!memoryText.trim()) return;
     setError(''); setNotice('');
@@ -192,6 +208,14 @@ export default function App() {
   async function deleteMemory(id: number) {
     try { await request(`/memory/${id}`, { method: 'DELETE' }); await refreshMemories(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Suppression impossible'); }
+  }
+  async function saveResourceSettings() {
+    try {
+      const saved = await request<ResourceSettings>('/resources/settings', { method: 'PUT', body: JSON.stringify(resourceSettings) });
+      setResourceSettings(saved);
+      await refreshResources();
+      setNotice('Seuils de ressources enregistrés.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Enregistrement des seuils impossible'); }
   }
   async function saveHeartbeat() {
     if (!heartbeat) return;
@@ -226,26 +250,26 @@ export default function App() {
   }
 
   const nav: { id: Page; label: string; icon: typeof Bot }[] = [
-    { id: 'overview', label: 'Vue d’ensemble', icon: Gauge },
     { id: 'agent', label: 'Agent', icon: Bot },
     { id: 'tasks', label: 'File de tâches', icon: ListTodo },
     { id: 'objectives', label: 'Objectifs', icon: Target },
     { id: 'heartbeat', label: 'Heartbeat', icon: Activity },
     { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'resources', label: 'Ressources', icon: Gauge },
+    { id: 'processes', label: 'Processus', icon: Cpu },
     { id: 'agents', label: 'Multi-agents', icon: Users },
     { id: 'improvements', label: 'Auto-amélioration', icon: GitBranch }
   ];
   const titles: Record<Page, string> = {
-    overview: 'Centre de contrôle', agent: 'Agent', tasks: 'File de tâches persistantes', objectives: 'Objectifs autonomes', heartbeat: 'Heartbeat', memory: 'Mémoire persistante',
-    resources: 'Gestionnaire de ressources', agents: 'Équipe multi-agents',
+    agent: 'Agent', tasks: 'File de tâches persistantes', objectives: 'Objectifs autonomes', heartbeat: 'Heartbeat', memory: 'Mémoire persistante',
+    resources: 'Gestionnaire de ressources', processes: 'Gestionnaire de processus', agents: 'Équipe multi-agents',
     improvements: 'Auto-amélioration'
   };
 
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand"><div className="logo"><Bot /></div><div><b>Automaton</b><small>LOCAL AGENT · 1.1.0</small></div></div>
+        <div className="brand"><div className="logo"><Bot /></div><div><b>Automaton</b><small>LOCAL AGENT · 1.4.0</small></div></div>
         <div className="navgroup">{nav.map(item => {
           const Icon = item.icon;
           return <button key={item.id} className={`nav ${page === item.id ? 'active' : ''}`} onClick={() => { setPage(item.id); setError(''); setNotice(''); }}>
@@ -258,48 +282,6 @@ export default function App() {
         <header><div><h1>{titles[page]}</h1><p>Automatisation locale · {provider} / {model}</p></div><button className="iconbtn" onClick={() => void refreshAll()} title="Actualiser"><RefreshCw size={17} /></button></header>
         {error && <div className="alert error">{error}</div>}
         {notice && <div className="alert success">{notice}</div>}
-
-
-        {page === 'overview' && <>
-          <section className="overview-status">
-            <div className="status-orb"><CircleCheck size={27}/></div>
-            <div className="overview-status-copy"><span className="eyebrow">ÉTAT DU SYSTÈME</span><h2>{status.startsWith('Connecté') ? 'Automaton opérationnel' : 'Backend indisponible'}</h2><p>{status} · {provider} / {model}</p></div>
-            <div className="supervision-state"><span className={heartbeat?.enabled ? 'live-dot' : 'idle-dot'} />Supervision {heartbeat?.enabled ? 'active' : 'en pause'}</div>
-          </section>
-          <section className="overview-metrics">
-            <article className="overview-metric"><div className="metric-icon cyan"><Cpu/></div><div><small>CPU</small><strong>{resources ? `${resources.system.cpu_percent.toFixed(0)}%` : '—'}</strong><span>Utilisation actuelle</span></div><div className="meter"><i style={{width:`${resources?.system.cpu_percent || 0}%`}}/></div></article>
-            <article className="overview-metric"><div className="metric-icon violet"><MemoryStick/></div><div><small>RAM</small><strong>{resources ? `${resources.system.memory_percent.toFixed(0)}%` : '—'}</strong><span>{resources ? `${formatBytes(resources.system.memory_used_bytes)} / ${formatBytes(resources.system.memory_total_bytes)}` : 'Chargement…'}</span></div><div className="meter"><i style={{width:`${resources?.system.memory_percent || 0}%`}}/></div></article>
-            <article className="overview-metric"><div className="metric-icon blue"><HardDrive/></div><div><small>STOCKAGE LIBRE</small><strong>{resources ? formatBytes(resources.storage.free_bytes) : '—'}</strong><span>Sur {resources ? formatBytes(resources.storage.total_bytes) : '—'}</span></div><div className="meter"><i style={{width:`${resources?.system.disk_percent || 0}%`}}/></div></article>
-            <article className="overview-metric"><div className="metric-icon green"><Bot/></div><div><small>ÉQUIPE MULTI-AGENTS</small><strong>3 rôles</strong><span>Exécution séquentielle</span></div><div className="metric-foot">Planifier · Analyser · Réviser</div></article>
-          </section>
-          <section className="overview-grid">
-            <article className="dash-card health-card"><div className="dash-heading"><h3><Activity/> Supervision autonome</h3><span className={heartbeat?.enabled ? 'tag-success' : 'tag-muted'}>{heartbeat?.enabled ? 'ACTIVE' : 'INACTIVE'}</span></div>
-              <div className="health-main"><div className="health-ring"><ShieldCheck size={35}/></div><div><strong>{heartbeat?.enabled ? 'Cycle activé' : 'En attente'}</strong><p>{heartbeat ? `Vérification toutes les ${heartbeat.interval_seconds}s` : 'Configuration non chargée'}</p></div></div>
-              <div className="health-detail"><span>Dernier cycle</span><b>{heartbeatRuns[0]?.started_at || 'Aucun cycle enregistré'}</b></div>
-              <div className="health-detail"><span>Résultat</span><b>{heartbeatRuns[0]?.summary || heartbeatRuns[0]?.error || 'En attente de données'}</b></div>
-              <button className="dash-link" onClick={()=>setPage('heartbeat')}>Configurer le heartbeat <ArrowUpRight size={14}/></button>
-            </article>
-            <article className="dash-card"><div className="dash-heading"><h3><Target/> Objectifs en cours</h3><button className="dash-link" onClick={()=>setPage('objectives')}>Tout voir <ArrowUpRight size={14}/></button></div>
-              {objectives.filter(x=>x.status==='active'||x.status==='paused').slice(0,4).map(goal=><div className="goal-mini" key={goal.id}><div><b>{goal.title}</b><span>{goal.completed_steps || 0}/{goal.total_steps || 0} étapes · {goal.status}</span></div><strong>{goal.total_steps ? Math.round(goal.completed_steps/goal.total_steps*100) : 0}%</strong><div className="progress"><div style={{width:`${goal.total_steps ? goal.completed_steps/goal.total_steps*100 : 0}%`}}/></div></div>)}
-              {!objectives.some(x=>x.status==='active'||x.status==='paused') && <p className="dash-empty">Aucun objectif actif. Crée un objectif pour démarrer une mission longue durée.</p>}
-            </article>
-            <article className="dash-card"><div className="dash-heading"><h3><ListTodo/> File des missions</h3><button className="dash-link" onClick={()=>setPage('tasks')}>Voir la file <ArrowUpRight size={14}/></button></div>
-              <div className="task-counts"><div><strong>{tasks.filter(t=>t.status==='running').length}</strong><span>En cours</span></div><div><strong>{tasks.filter(t=>t.status==='queued').length}</strong><span>En attente</span></div><div><strong>{tasks.filter(t=>t.status==='succeeded').length}</strong><span>Terminées</span></div></div>
-              {tasks.slice(0,4).map(task=><div className="activity-line" key={task.id}><span className={task.status==='failed'?'activity-dot warn':'activity-dot'}></span><div><b>{task.prompt}</b><small>{task.status} · {task.updated_at}</small></div></div>)}
-              {!tasks.length && <p className="dash-empty">Aucune tâche enregistrée.</p>}
-            </article>
-            <article className="dash-card resource-summary"><div className="dash-heading"><h3><Gauge/> Ressources système</h3><button className="dash-link" onClick={()=>setPage('resources')}>Détails <ArrowUpRight size={14}/></button></div>
-              {resources ? <><div className="resource-line"><span>CPU</span><b>{resources.system.cpu_percent.toFixed(1)}%</b></div><div className="mini-meter"><i style={{width:`${resources.system.cpu_percent}%`}}/></div><div className="resource-line"><span>Mémoire vive</span><b>{resources.system.memory_percent.toFixed(1)}%</b></div><div className="mini-meter"><i style={{width:`${resources.system.memory_percent}%`}}/></div><div className="resource-line"><span>Disque utilisé</span><b>{resources.system.disk_percent.toFixed(1)}%</b></div><div className="mini-meter"><i style={{width:`${resources.system.disk_percent}%`}}/></div><p className="resource-foot">Réseau reçu {formatBytes(resources.system.network_received_bytes)} · envoyé {formatBytes(resources.system.network_sent_bytes)}</p></> : <p className="dash-empty">Chargement des métriques système…</p>}
-            </article>
-            <article className="dash-card"><div className="dash-heading"><h3><Clock3/> Activité récente</h3></div>
-              {heartbeatRuns.slice(0,3).map(run=><div className="activity-line" key={run.id}><span className="activity-dot"></span><div><b>{run.summary || run.error || 'Cycle autonome'}</b><small>{run.status} · {run.started_at}</small></div></div>)}
-              {objectives.slice(0,2).map(goal=><div className="activity-line" key={`goal-${goal.id}`}><span className="activity-dot blue-dot"></span><div><b>Objectif · {goal.title}</b><small>{goal.completed_steps || 0}/{goal.total_steps || 0} étapes terminées</small></div></div>)}
-              {!heartbeatRuns.length && !objectives.length && <p className="dash-empty">L’activité apparaîtra ici au fur et à mesure de l’exécution.</p>}
-            </article>
-            <article className="dash-card quick-actions"><div className="dash-heading"><h3><Zap/> Accès rapide</h3></div><button onClick={()=>setPage('agent')}><Bot/>Ouvrir l’agent</button><button onClick={()=>setPage('tasks')}><Play/>Nouvelle tâche</button><button onClick={()=>setPage('agents')}><Users/>Équipe multi-agents</button><button onClick={()=>setPage('resources')}><Gauge/>Surveiller les ressources</button></article>
-          </section>
-        </>}
-
 
         {page === 'agent' && <>
           <section className="metrics">
@@ -392,44 +374,55 @@ export default function App() {
         </section>}
 
         {page === 'resources' && <section className="panel">
-          <div className="panelintro"><Gauge /><div><h2>État de la machine</h2><p>Informations d’exécution et inventaire limité au workspace.</p></div></div>
+          <div className="panelintro"><Gauge /><div><h2>Supervision des ressources</h2><p>Mesures système actualisées toutes les 3 secondes. La collecte est en lecture seule.</p></div></div>
           {resources && <>
+            {resources.alerts.length > 0 && <div className="warning"><Activity size={17} /><span>{resources.alerts.map(alert => alert.message).join(' · ')}</span></div>}
             <div className="resourcegrid">
-              <div className="resourcecard"><small>CPU</small><b>{resources.system.cpu_percent.toFixed(1)}%</b><span>Charge processeur</span></div>
-              <div className="resourcecard"><small>RAM</small><b>{resources.system.memory_percent.toFixed(1)}%</b><span>{formatBytes(resources.system.memory_used_bytes)} / {formatBytes(resources.system.memory_total_bytes)}</span></div>
-              <div className="resourcecard"><small>DISQUE UTILISÉ</small><b>{resources.system.disk_percent.toFixed(1)}%</b><span>{formatBytes(resources.storage.free_bytes)} libres</span></div>
-              <div className="resourcecard"><small>RÉSEAU REÇU</small><b>{formatBytes(resources.system.network_received_bytes)}</b><span>Depuis le démarrage</span></div>
-              <div className="resourcecard"><small>RÉSEAU ENVOYÉ</small><b>{formatBytes(resources.system.network_sent_bytes)}</b><span>Depuis le démarrage</span></div>
-              <div className="resourcecard"><small>PROCESSUS API</small><b>{resources.pid}</b><span>Python {resources.python}</span></div>
+              <div className="resourcecard"><small>CPU · {resources.cpu.logical_cores ?? '—'} cœurs logiques</small><b>{resources.cpu.percent.toFixed(1)} %</b><span>{resources.cpu.physical_cores ?? '—'} cœurs physiques</span><progress max="100" value={resources.cpu.percent} /></div>
+              <div className="resourcecard"><small>MÉMOIRE RAM</small><b>{resources.memory.percent.toFixed(1)} %</b><span>{formatBytes(resources.memory.used_bytes)} / {formatBytes(resources.memory.total_bytes)}</span><progress max="100" value={resources.memory.percent} /></div>
+              <div className="resourcecard"><small>STOCKAGE · DISQUE DE DONNÉES</small><b>{resources.storage.percent.toFixed(1)} %</b><span>{formatBytes(resources.storage.free_bytes)} libres / {formatBytes(resources.storage.total_bytes)}</span><progress max="100" value={resources.storage.percent} /></div>
+              <div className="resourcecard"><small>FICHIERS WORKSPACE</small><b>{resources.workspace.file_count}</b><span>{formatBytes(resources.workspace.total_bytes)} au total</span></div>
             </div>
-            <p className="subtle">{resources.platform} · GPU : {resources.system.gpu_available ? 'disponible' : 'télémétrie non configurée'}</p>
-            <div className="resource-history">
-              <div className="history-heading"><div><h3>Historique des ressources</h3><p>Échantillons collectés pendant cette session · actualisation toutes les 3 secondes.</p></div><span>{resourceHistory.length} / 40 points</span></div>
-              <div className="history-grid">
-                {([{key:'cpu',label:'CPU',color:'#36bafa'},{key:'memory',label:'RAM',color:'#a58aff'},{key:'disk',label:'Disque',color:'#36d6a0'}] as const).map(metric => {
-                  const points = resourceHistory.map((point,index) => `${resourceHistory.length < 2 ? 0 : index / (resourceHistory.length - 1) * 100},${100 - Math.max(0,Math.min(100,point[metric.key]))}`).join(' ');
-                  const latest = resourceHistory[resourceHistory.length - 1]?.[metric.key] ?? 0;
-                  return <div className="history-card" key={metric.key}><div><b>{metric.label}</b><strong>{latest.toFixed(1)}%</strong></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label={`Historique ${metric.label}`}><polyline points={points} fill="none" stroke={metric.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" /></svg></div>;
-                })}
-              </div>
-              <div className="threshold-panel"><div><b>Seuils d’alerte</b><small>Une alerte apparaît lorsque la mesure dépasse le seuil défini.</small></div>
-                {([{key:'cpu',label:'CPU'},{key:'memory',label:'RAM'},{key:'disk',label:'Disque'}] as const).map(item => <label key={item.key}>{item.label}<div><input type="number" min="1" max="100" value={alertThresholds[item.key]} onChange={event=>setAlertThresholds(current=>({...current,[item.key]:Math.max(1,Math.min(100,Number(event.target.value)||1))}))}/><span>%</span></div></label>)}
-              </div>
-              {resources && ([
-                {key:'cpu',label:'CPU',value:resources.system.cpu_percent},
-                {key:'memory',label:'RAM',value:resources.system.memory_percent},
-                {key:'disk',label:'Disque',value:resources.system.disk_percent}
-              ] as const).filter(item=>item.value>=alertThresholds[item.key]).map(item=><div className="resource-warning" key={item.key}>Alerte {item.label} : {item.value.toFixed(1)}% (seuil {alertThresholds[item.key]}%).</div>)}
+            <h3>Trafic réseau cumulé depuis le démarrage</h3>
+            {resources.network ? <div className="resourcegrid">
+              <div className="resourcecard"><small>ENVOYÉ</small><b>{formatBytes(resources.network.bytes_sent)}</b><span>{resources.network.packets_sent.toLocaleString('fr-FR')} paquets</span></div>
+              <div className="resourcecard"><small>REÇU</small><b>{formatBytes(resources.network.bytes_received)}</b><span>{resources.network.packets_received.toLocaleString('fr-FR')} paquets</span></div>
+            </div> : <p className="empty">Compteurs réseau indisponibles.</p>}
+            <h3>Seuils d'alerte</h3>
+            <div className="formgrid">
+              <label>CPU (%)<input type="number" min="1" max="100" value={resourceSettings.cpu_warning} onChange={e=>setResourceSettings({...resourceSettings,cpu_warning:Number(e.target.value)})} /></label>
+              <label>RAM (%)<input type="number" min="1" max="100" value={resourceSettings.memory_warning} onChange={e=>setResourceSettings({...resourceSettings,memory_warning:Number(e.target.value)})} /></label>
+              <label>Disque (%)<input type="number" min="1" max="100" value={resourceSettings.disk_warning} onChange={e=>setResourceSettings({...resourceSettings,disk_warning:Number(e.target.value)})} /></label>
             </div>
-            <h3>Processus gérés par Automaton</h3>
-            <div className="process-launch"><input value={processScript} onChange={e=>setProcessScript(e.target.value)} placeholder="Chemin d’un script Python du workspace" /><button className="primary" disabled={!processScript.trim()} onClick={()=>void startManagedProcess()}><Play size={14}/> Démarrer</button></div>
-            {managedProcesses.map(proc=><article className="managed-process" key={proc.id}><div className="managed-process-head"><div><b>{proc.script}</b><small>PID {proc.pid} · {proc.status}{proc.exit_code!==null ? ' · code '+proc.exit_code : ''}</small></div><div className="process-buttons"><button className="secondary" onClick={()=>void loadProcessLog(proc.id)}>Logs</button>{['running','starting','stopping'].includes(proc.status) && <button className="secondary stop-process" onClick={()=>void stopManagedProcess(proc.id)}>Arrêter</button>}</div></div>{processLogs[proc.id]!==undefined && <pre className="process-log">{processLogs[proc.id] || 'Aucune sortie pour le moment.'}</pre>}</article>)}
-            {!managedProcesses.length && <p className="subtle">Aucun processus géré pour le moment.</p>}
-            <h3>Fichiers du workspace</h3>
+            <button className="secondary" onClick={()=>void saveResourceSettings()}>Enregistrer les seuils</button>
+            <h3>Processus les plus consommateurs de mémoire</h3>
+            {resources.processes.map(proc=><div className="file" key={proc.pid}><span>{proc.name} · PID {proc.pid}<small>CPU {proc.cpu_percent.toFixed(1)} % · RAM {proc.memory_percent.toFixed(1)} %</small></span><b>{formatBytes(proc.memory_bytes)}</b></div>)}
+            <h3>Inventaire du workspace</h3>
             {resources.workspace.files.map(file => <div className="file" key={file.path}><span>{file.path}</span><small>{formatBytes(file.size)}</small></div>)}
-            <p className="securitynote"><ShieldCheck size={15} /> Seuls les scripts autorisés du workspace peuvent être démarrés. Les processus orphelins après redémarrage ne sont pas arrêtables depuis l’application.</p>
+            <p className="subtle">{resources.platform} · Python {resources.python} · PID backend {resources.pid} · Mesure {new Date(resources.sampled_at).toLocaleTimeString('fr-FR')}</p>
+            <p className="securitynote"><ShieldCheck size={15} /> GPU non mesuré. Les processus affichés sont informatifs : Automaton ne contrôle pas arbitrairement les processus du système.</p>
           </>}
           <button className="secondary" onClick={() => void refreshResources()}>Actualiser les ressources</button>
+        </section>}
+
+
+        {page === 'processes' && <section className="panel">
+          <div className="panelintro"><Cpu /><div><h2>Processus gérés par Automaton</h2><p>Démarre uniquement des scripts Python déjà présents dans le workspace. Les processus, PID, états et journaux sont suivis dans SQLite.</p></div></div>
+          <div className="warning"><ShieldCheck size={17} /><span>Windows Sandbox fournit une isolation système plus forte : réseau, presse-papiers et vGPU désactivés ; dossier du script et runtime Python en lecture seule ; seul un dossier de journaux dédié est accessible en écriture. Windows Sandbox doit être activé sur Windows Pro/Entreprise/Éducation. Le profil Job Object reste disponible comme mode de compatibilité et ne bloque pas les accès fichiers/réseau du compte.</span></div>
+          <label>Script Python du workspace<input value={processPath} onChange={e=>setProcessPath(e.target.value)} placeholder="workers/worker.py" /></label>
+          <label>Profil d'isolation<select value={processIsolation} onChange={e=>setProcessIsolation(e.target.value as 'job_object'|'windows_sandbox')}><option value="windows_sandbox">Windows Sandbox · isolation renforcée</option><option value="job_object">Job Object · limites de ressources</option></select></label>
+          <button className="primary" disabled={!processPath.trim()} onClick={()=>void startManagedProcess()}><Play size={15}/> Démarrer le processus</button>
+          <div className="tasktoolbar"><h3>Processus suivis ({managedProcesses.length})</h3><button className="secondary" onClick={()=>void refreshProcesses()}>Actualiser</button></div>
+          {managedProcesses.length ? managedProcesses.map(item=><article className="taskrow" key={item.id}>
+            <div className="taskmeta"><b>#{item.id} · PID hôte {item.pid}</b><span className={`statuspill ${item.status}`}>{item.status}</span><small>{item.isolation_profile} · {item.security_boundary}</small></div>
+            <p>{item.script}</p>
+            <small className="processmeta">Démarré : {item.started_at} · Code de sortie : {item.exit_code ?? '—'}</small>
+            <div className="tasktoolbar">
+              <button className="secondary" onClick={()=>void loadProcessLog(item.id)}>Voir les journaux</button>
+              {item.status === 'running' || item.status === 'stopping' ? <button className="dangericon" onClick={()=>void stopManagedProcess(item.id)}>Arrêter</button> : null}
+            </div>
+          </article>) : <p className="empty">Aucun processus géré.</p>}
+          {selectedProcess !== null && <section className="processlogs"><div className="tasktoolbar"><h3>Journal · processus #{selectedProcess}</h3><button className="secondary" onClick={()=>void loadProcessLog(selectedProcess)}>Recharger</button></div><pre>{processLog || 'Aucune sortie enregistrée.'}</pre></section>}
         </section>}
 
         {page === 'agents' && <section className="panel">
