@@ -82,7 +82,8 @@ async def run_agent(prompt: str):
                         raise ValueError(f"Outil inconnu : {name}")
                     result = CALLS[name](args)
                     content = json.dumps(result, ensure_ascii=False)
-                    tool_trace.append({"tool":name,"arguments":args,"result":result,"success":True})
+                    action_ok = not (name == "run_python" and isinstance(result, dict) and result.get("returncode") != 0)
+                    tool_trace.append({"tool":name,"arguments":args,"result":result,"success":action_ok})
                 except Exception as exc:
                     content = json.dumps({"error":str(exc)}, ensure_ascii=False)
                     tool_trace.append({"tool":call.get("function",{}).get("name","unknown"),"success":False,"error":str(exc)})
