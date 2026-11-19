@@ -75,9 +75,11 @@ def create_job_for_suspended_process(process, memory_bytes=512 * 1024 * 1024,
             raise ctypes.WinError(ctypes.get_last_error())
         if not kernel32.AssignProcessToJobObject(job, wintypes.HANDLE(int(process._handle))):
             raise ctypes.WinError(ctypes.get_last_error())
-        previous_suspend_count = kernel32.ResumeThread(wintypes.HANDLE(int(process._thread)))
-        if previous_suspend_count == 0xFFFFFFFF:
-            raise ctypes.WinError(ctypes.get_last_error())
+        # Popen closes the primary thread handle right after CreateProcess, so resume
+        # via the process handle it keeps (PROCESS_ALL_ACCESS includes SUSPEND_RESUME).
+        status = _ntdll().NtResumeProcess(wintypes.HANDLE(int(process._handle)))
+        if status != 0:
+            raise OSError(f"NtResumeProcess a échoué (NTSTATUS 0x{status & 0xFFFFFFFF:08X})")
         return job
     except Exception:
         kernel32.TerminateJobObject(job, 1)
@@ -93,13 +95,18 @@ def _kernel32():
     kernel32.SetInformationJobObject.restype = wintypes.BOOL
     kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-    kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
-    kernel32.ResumeThread.restype = wintypes.DWORD
     kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
     kernel32.TerminateJobObject.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
     return kernel32
+
+
+def _ntdll():
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+    ntdll.NtResumeProcess.restype = ctypes.c_long
+    return ntdll
 
 
 def terminate_job(job, exit_code=1):

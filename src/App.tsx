@@ -82,16 +82,17 @@ export default function App() {
 
   async function refreshBase() {
     try {
-      const [health, files, config] = await Promise.all([
+      const [health, files] = await Promise.all([
         request<{ status: string; version: string }>('/health'),
-        request<{ files: string[] }>('/workspace'),
-        request<{ provider: string; model: string }>('/config')
+        request<{ files: string[] }>('/workspace')
       ]);
       setStatus(`Connecté · API ${health.version}`);
       setWorkspace(files.files || []);
-      setProvider(config.provider);
-      setModel(config.model);
     } catch { setStatus('Backend indisponible'); }
+  }
+  async function refreshConfig() {
+    const config = await request<{ provider: string; model: string }>('/config');
+    setProvider(config.provider); setModel(config.model);
   }
   async function refreshHeartbeat() {
     const data = await request<{ config: HeartbeatConfig; runs: HeartbeatRun[] }>('/heartbeat');
@@ -108,14 +109,18 @@ export default function App() {
   async function refreshAll() {
     setError('');
     await refreshBase();
-    try { await Promise.all([refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks(), refreshObjectives(), refreshProcesses()]); }
+    try { await Promise.all([refreshConfig(), refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks(), refreshObjectives(), refreshProcesses()]); }
     catch (e) { setError(e instanceof Error ? e.message : 'Erreur de chargement'); }
   }
+  useEffect(() => { void refreshAll(); }, []);
+  // Poll only the data the visible page renders, and nothing while the window is hidden.
   useEffect(() => {
-    void refreshAll();
-    const id = window.setInterval(() => { void refreshBase(); void refreshResources().catch(() => {}); void refreshTasks().catch(() => {}); void refreshObjectives().catch(() => {}); void refreshProcesses().catch(() => {}); }, 3000);
+    const byPage: Partial<Record<Page, () => Promise<void>>> = { resources: refreshResources, tasks: refreshTasks, objectives: refreshObjectives, processes: refreshProcesses };
+    const tick = () => { if (document.hidden) return; void refreshBase(); void byPage[page]?.().catch(() => {}); };
+    tick();
+    const id = window.setInterval(tick, 3000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [page]);
 
   async function send() {
     const value = prompt.trim();

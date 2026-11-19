@@ -31,7 +31,8 @@ class SandboxRunnerTests(unittest.TestCase):
         self.assertEqual(result["returncode"], 0)
         self.assertIn("sandbox-ok", result["stdout"])
         self.assertEqual(result["execution_profile"], "restricted_subprocess")
-        self.assertEqual(result["isolation_guarantee"], "resource_limits_only")
+        self.assertIn(result["isolation_guarantee"],
+                      {"windows_job_object_resource_containment", "posix_resource_limits"})
 
     def test_rejects_traversal_and_non_python_files(self):
         with self.assertRaises(ValueError):

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import httpx
 
@@ -48,7 +49,8 @@ def provider_headers():
     return headers
 
 
-async def run_agent(prompt: str):
+async def run_agent(prompt: str, use_history: bool = False):
+    """use_history: only the interactive chat shares the conversation; tasks/heartbeat run with a clean context."""
     if not API_KEY or API_KEY in {"replace_me", "your_openrouter_api_key"}:
         raise RuntimeError(
             "Clé API absente : renseigne OPENROUTER_API_KEY dans backend/.env."
@@ -62,8 +64,10 @@ async def run_agent(prompt: str):
         for item in remembered
     ) or "Aucun souvenir enregistré."
     system = SYSTEM + "\n\nSouvenirs persistants disponibles :\n" + memory_context
-    messages = [{"role":"system","content":system}] + db.history(16) + [{"role":"user","content":prompt}]
-    db.save("user", prompt)
+    past = db.history(16) if use_history else []
+    messages = [{"role":"system","content":system}] + past + [{"role":"user","content":prompt}]
+    if use_history:
+        db.save("user", prompt)
     tool_trace = []
 
     async with httpx.AsyncClient(timeout=90) as client:
@@ -77,7 +81,8 @@ async def run_agent(prompt: str):
             message = response.json()["choices"][0]["message"]
             if not message.get("tool_calls"):
                 answer = message.get("content") or "Tâche terminée."
-                db.save("assistant", answer)
+                if use_history:
+                    db.save("assistant", answer)
                 return {"answer":answer,"steps":step+1,"provider":PROVIDER,"model":MODEL,"tool_trace":tool_trace}
             messages.append(message)
             for call in message["tool_calls"]:
@@ -86,7 +91,8 @@ async def run_agent(prompt: str):
                     args = json.loads(call["function"].get("arguments") or "{}")
                     if name not in CALLS:
                         raise ValueError(f"Outil inconnu : {name}")
-                    result = CALLS[name](args)
+                    # Tools block (subprocess, SQLite): run off the event loop so the API and workers stay responsive.
+                    result = await asyncio.to_thread(CALLS[name], args)
                     content = json.dumps(result, ensure_ascii=False)
                     action_ok = not (name == "run_python" and isinstance(result, dict) and result.get("returncode") != 0)
                     tool_trace.append({"tool":name,"arguments":args,"result":result,"success":action_ok})
@@ -96,5 +102,6 @@ async def run_agent(prompt: str):
                 messages.append({"role":"tool","tool_call_id":call["id"],"content":content})
 
     answer = "Limite d'itérations atteinte. Relance avec une instruction complémentaire."
-    db.save("assistant", answer)
+    if use_history:
+        db.save("assistant", answer)
     return {"answer":answer,"steps":MAX_STEPS,"provider":PROVIDER,"model":MODEL,"tool_trace":tool_trace}

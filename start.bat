@@ -7,10 +7,11 @@ echo ============================================
 echo.
 
 echo [1/2] Demarrage du backend (uvicorn, port 8765)...
-start "Automaton Backend" cmd /k "cd /d C:\Users\Mayss\Downloads\automaton-windows-starter\automaton\backend && uvicorn app.main:app --reload --host 127.0.0.1 --port 8765"
+rem --reload-dir app : sinon uvicorn redemarre quand l'agent ecrit un .py dans workspace\
+start "Automaton Backend" cmd /k "cd /d "%~dp0backend" && uvicorn app.main:app --reload --reload-dir app --host 127.0.0.1 --port 8765"
 
 echo [2/2] Demarrage du frontend (vite + electron)...
-start "Automaton Frontend" cmd /k "cd /d C:\Users\Mayss\Downloads\automaton-windows-starter\automaton && npm run dev"
+start "Automaton Frontend" cmd /k "cd /d "%~dp0" && npm run dev"
 
 echo.
 echo Les deux fenetres sont lancees :

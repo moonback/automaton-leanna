@@ -95,7 +95,7 @@ def history():
 @app.post("/agent/run")
 async def agent_run(req: RunRequest):
     try:
-        return await run_agent(req.prompt)
+        return await run_agent(req.prompt, use_history=True)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
