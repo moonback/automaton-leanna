@@ -196,6 +196,17 @@ def cancel_task(task_id):
         return cur.rowcount > 0
 
 
+def summary():
+    """Cheap activity counters polled by every UI page (nav badges, 3D scene)."""
+    with connect() as c:
+        tasks = {row[0]: row[1] for row in c.execute("SELECT status, COUNT(*) FROM tasks GROUP BY status")}
+        objectives = c.execute("SELECT COUNT(*) FROM objectives WHERE status='active'").fetchone()[0]
+        processes = c.execute("SELECT COUNT(*) FROM managed_processes WHERE status IN ('running','stopping')").fetchone()[0]
+    return {"tasks_queued": tasks.get("queued", 0), "tasks_running": tasks.get("running", 0),
+            "tasks_failed": tasks.get("failed", 0), "objectives_active": objectives,
+            "processes_running": processes}
+
+
 def create_objective(title, description, steps, priority=3, due_at=None):
     with connect() as c:
         cur = c.execute("INSERT INTO objectives(title,description,priority,due_at) VALUES(?,?,?,?)",

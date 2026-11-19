@@ -1,11 +1,33 @@
-import { useEffect, useState } from 'react';
+import { Component, lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  Activity, Bot, Brain, Cpu, Folder, Gauge, GitBranch, ListTodo, Play, RefreshCw, Target,
-  Send, Settings, ShieldCheck, Trash2, Users, Zap
+  Activity, Bot, Brain, Cpu, FileText, Folder, Gauge, GitBranch, ListTodo, Play, RefreshCw, RotateCcw, Search, Target,
+  Send, ShieldCheck, Trash2, Users, X, Zap
 } from 'lucide-react';
+import type { SatelliteKind } from './Scene3D';
+
+// Three.js is ~700 kB: load it after the UI so the first paint is not blocked.
+const Scene3D = lazy(() => import('./Scene3D'));
+
+/** The 3D layer is decorative: if it throws, drop it instead of unmounting the whole app. */
+class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() { return this.state.failed ? <div className="scene" aria-hidden="true" /> : this.props.children; }
+}
 
 const API = 'http://127.0.0.1:8765';
-type Message = { role: 'user' | 'assistant'; content: string };
+type ToolStep = { tool: string; arguments?: Record<string, unknown>; success: boolean; error?: string };
+type Message = { role: 'user' | 'assistant'; content: string; trace?: ToolStep[] };
+type Summary = { tasks_queued: number; tasks_running: number; tasks_failed: number; objectives_active: number; processes_running: number };
+type TaskFilter = 'all' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+const HISTORY_SAMPLES = 60;
+
+/** Inline SVG trend line for the last samples (0..100 %). */
+function Sparkline({ values, label }: { values: number[]; label: string }) {
+  if (values.length < 2) return null;
+  const points = values.map((value, index) => `${(index / (HISTORY_SAMPLES - 1)) * 100},${30 - (Math.min(value, 100) / 100) * 30}`).join(' ');
+  return <svg className="sparkline" viewBox="0 0 100 30" preserveAspectRatio="none" role="img" aria-label={label}><polyline points={points} /></svg>;
+}
 type Page = 'agent' | 'tasks' | 'objectives' | 'heartbeat' | 'memory' | 'resources' | 'processes' | 'agents' | 'improvements';
 type Memory = { id: number; content: string; tags: string; importance: number; created_at: string };
 type HeartbeatRun = { id: number; status: string; summary: string; error: string; started_at: string };
@@ -79,15 +101,23 @@ export default function App() {
   const [patch, setPatch] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [preview, setPreview] = useState<{ path: string; content: string } | null>(null);
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
+  const [memoryQuery, setMemoryQuery] = useState('');
+  const [samples, setSamples] = useState<{ cpu: number[]; memory: number[] }>({ cpu: [], memory: [] });
+  const [patchDiff, setPatchDiff] = useState('');
 
   async function refreshBase() {
     try {
-      const [health, files] = await Promise.all([
+      const [health, files, counts] = await Promise.all([
         request<{ status: string; version: string }>('/health'),
-        request<{ files: string[] }>('/workspace')
+        request<{ files: string[] }>('/workspace'),
+        request<Summary>('/summary')
       ]);
       setStatus(`Connecté · API ${health.version}`);
       setWorkspace(files.files || []);
+      setSummary(counts);
     } catch { setStatus('Backend indisponible'); }
   }
   async function refreshConfig() {
@@ -98,11 +128,18 @@ export default function App() {
     const data = await request<{ config: HeartbeatConfig; runs: HeartbeatRun[] }>('/heartbeat');
     setHeartbeat(data.config); setHeartbeatRuns(data.runs);
   }
-  async function refreshMemories() {
-    const data = await request<{ memories: Memory[] }>('/memory');
+  async function refreshMemories(query = memoryQuery) {
+    const data = await request<{ memories: Memory[] }>(`/memory?q=${encodeURIComponent(query.trim())}&limit=100`);
     setMemories(data.memories);
   }
-  async function refreshResources() { const [snapshot, settings] = await Promise.all([request<ResourceSnapshot>('/resources'), request<ResourceSettings>('/resources/settings')]); setResources(snapshot); setResourceSettings(settings); }
+  async function refreshResources() {
+    const [snapshot, settings] = await Promise.all([request<ResourceSnapshot>('/resources'), request<ResourceSettings>('/resources/settings')]);
+    setResources(snapshot); setResourceSettings(settings);
+    setSamples(current => ({
+      cpu: [...current.cpu, snapshot.cpu.percent].slice(-HISTORY_SAMPLES),
+      memory: [...current.memory, snapshot.memory.percent].slice(-HISTORY_SAMPLES)
+    }));
+  }
   async function refreshTasks() { const data = await request<{ tasks: Task[] }>('/tasks'); setTasks(data.tasks); }
   async function refreshProcesses() { const data = await request<{ processes: ManagedProcess[] }>('/processes'); setManagedProcesses(data.processes); }
   async function refreshObjectives() { const data = await request<{ objectives: Objective[] }>('/objectives'); const details = await Promise.all(data.objectives.map(item => request<Objective>(`/objectives/${item.id}`))); setObjectives(details); }
@@ -112,7 +149,28 @@ export default function App() {
     try { await Promise.all([refreshConfig(), refreshHeartbeat(), refreshMemories(), refreshResources(), refreshTasks(), refreshObjectives(), refreshProcesses()]); }
     catch (e) { setError(e instanceof Error ? e.message : 'Erreur de chargement'); }
   }
-  useEffect(() => { void refreshAll(); }, []);
+  useEffect(() => {
+    void refreshAll();
+    // Restore the conversation kept by the backend instead of starting from an empty chat.
+    request<{ messages: Message[] }>('/history')
+      .then(data => { if (data.messages.length) setMessages(data.messages); })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!notice) return;
+    const id = window.setTimeout(() => setNotice(''), 5000);
+    return () => window.clearTimeout(id);
+  }, [notice]);
+  useEffect(() => {
+    const id = window.setTimeout(() => { void refreshMemories(memoryQuery).catch(() => {}); }, 250);
+    return () => window.clearTimeout(id);
+  }, [memoryQuery]);
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreview(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [preview]);
   // Poll only the data the visible page renders, and nothing while the window is hidden.
   useEffect(() => {
     const byPage: Partial<Record<Page, () => Promise<void>>> = { resources: refreshResources, tasks: refreshTasks, objectives: refreshObjectives, processes: refreshProcesses };
@@ -128,8 +186,8 @@ export default function App() {
     setMessages(current => [...current, { role: 'user', content: value }]);
     setPrompt(''); setBusy(true); setError('');
     try {
-      const data = await request<{ answer: string }>('/agent/run', { method: 'POST', body: JSON.stringify({ prompt: value }) });
-      setMessages(current => [...current, { role: 'assistant', content: data.answer || 'Tâche terminée.' }]);
+      const data = await request<{ answer: string; tool_trace?: ToolStep[] }>('/agent/run', { method: 'POST', body: JSON.stringify({ prompt: value }) });
+      setMessages(current => [...current, { role: 'assistant', content: data.answer || 'Tâche terminée.', trace: data.tool_trace }]);
       void refreshBase();
     } catch (e) {
       setMessages(current => [...current, { role: 'assistant', content: `Erreur : ${e instanceof Error ? e.message : 'Erreur inconnue'}` }]);
@@ -172,6 +230,16 @@ export default function App() {
   async function cancelTask(id: number) {
     try { await request(`/tasks/${id}`, { method: 'DELETE' }); await refreshTasks(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Annulation impossible'); }
+  }
+  async function requeueTask(task: Task) {
+    try {
+      const created = await request<Task>('/tasks', { method: 'POST', body: JSON.stringify({ prompt: task.prompt }) });
+      await refreshTasks(); setNotice(`Tâche #${task.id} remise en file sous le numéro #${created.id}.`);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Remise en file impossible'); }
+  }
+  async function openFile(path: string) {
+    try { setPreview(await request<{ path: string; content: string }>(`/workspace/file?path=${encodeURIComponent(path)}`)); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Lecture impossible'); }
   }
 
   async function startManagedProcess() {
@@ -250,6 +318,7 @@ export default function App() {
         method: 'POST', body: JSON.stringify({ patch })
       });
       setNotice(`Patch appliqué · ${result.validation}. ${result.note}`);
+      setPatchDiff(result.diff);
     } catch (e) { setError(e instanceof Error ? e.message : 'Patch refusé'); }
     finally { setBusy(false); }
   }
@@ -271,44 +340,77 @@ export default function App() {
     improvements: 'Auto-amélioration'
   };
 
+  const connected = status.startsWith('Connecté');
+  const queuedWork = (summary?.tasks_queued ?? 0) + (summary?.tasks_running ?? 0);
+  const objectivesActive = summary?.objectives_active ?? 0;
+  const processesRunning = summary?.processes_running ?? 0;
+  const satelliteKey = `${processesRunning}/${queuedWork}/${objectivesActive}`;
+  const sceneState = useMemo(() => ({
+    page, busy, connected,
+    load: Math.min(1, ((summary?.tasks_running ?? 0) + processesRunning) / 4),
+    satellites: [
+      ...Array<SatelliteKind>(Math.min(processesRunning, 8)).fill('process'),
+      ...Array<SatelliteKind>(Math.min(queuedWork, 8)).fill('task'),
+      ...Array<SatelliteKind>(Math.min(objectivesActive, 8)).fill('objective')
+    ]
+  }), [page, busy, connected, satelliteKey, summary?.tasks_running]);
+  const badges: Partial<Record<Page, number>> = { tasks: queuedWork, objectives: objectivesActive, processes: processesRunning };
+  const coreLine = !connected ? 'Backend injoignable' : busy ? 'Automaton travaille' : queuedWork ? 'Automaton traite la file' : 'Automaton est en veille';
+  const taskCounts = tasks.reduce<Record<string, number>>((acc, task) => ({ ...acc, [task.status]: (acc[task.status] ?? 0) + 1 }), {});
+  const visibleTasks = taskFilter === 'all' ? tasks : tasks.filter(task => task.status === taskFilter);
+  const taskFilters: { id: TaskFilter; label: string }[] = [
+    { id: 'all', label: 'Toutes' }, { id: 'queued', label: 'En attente' }, { id: 'running', label: 'En cours' },
+    { id: 'succeeded', label: 'Réussies' }, { id: 'failed', label: 'Échouées' }, { id: 'cancelled', label: 'Annulées' }
+  ];
+
   return (
+    <>
+    <SceneBoundary><Suspense fallback={<div className="scene" aria-hidden="true" />}><Scene3D state={sceneState} /></Suspense></SceneBoundary>
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand"><div className="logo"><Bot /></div><div><b>Automaton</b><small>LOCAL AGENT · 1.4.0</small></div></div>
-        <div className="navgroup">{nav.map(item => {
+        <div className="brand"><div className="logo"><Bot /></div><div><b>Automaton</b><small>Agent local v1.4.0</small></div></div>
+        <nav className="navgroup">{nav.map(item => {
           const Icon = item.icon;
-          return <button key={item.id} className={`nav ${page === item.id ? 'active' : ''}`} onClick={() => { setPage(item.id); setError(''); setNotice(''); }}>
-            <Icon size={17} />{item.label}
+          const badge = badges[item.id];
+          return <button key={item.id} className={`nav ${page === item.id ? 'active' : ''}`} aria-current={page === item.id ? 'page' : undefined} onClick={() => { setPage(item.id); setError(''); setNotice(''); }}>
+            <Icon size={17} />{item.label}{badge ? <span className="badge" aria-label={`${badge} actifs`}>{badge}</span> : null}
           </button>;
-        })}</div>
-        <div className="sidebottom"><span className={`dot ${status.startsWith('Connecté') ? 'ok' : ''}`} />{status}</div>
+        })}</nav>
+        <div className="sidebottom"><span className={`dot ${connected ? 'ok' : ''}`} />{status}</div>
       </aside>
       <main>
-        <header><div><h1>{titles[page]}</h1><p>Automatisation locale · {provider} / {model}</p></div><button className="iconbtn" onClick={() => void refreshAll()} title="Actualiser"><RefreshCw size={17} /></button></header>
-        {error && <div className="alert error">{error}</div>}
-        {notice && <div className="alert success">{notice}</div>}
+        <header><div><h1 key={page}>{titles[page]}</h1><p>{provider} / {model}</p></div><button className="iconbtn" onClick={() => void refreshAll()} title="Actualiser" aria-label="Actualiser"><RefreshCw size={17} /></button></header>
+        {error && <div className="alert error" role="alert">{error}</div>}
+        {notice && <div className="alert success" role="status">{notice}</div>}
 
         {page === 'agent' && <>
-          <section className="metrics">
-            <div className="metric"><Cpu /><div><small>FOURNISSEUR · MODÈLE</small><b>{provider} · {model}</b></div></div>
-            <div className="metric"><Folder /><div><small>FICHIERS WORKSPACE</small><b>{workspace.length}</b></div></div>
-            <div className="metric"><Activity /><div><small>ÉTAT</small><b>{busy ? 'Travail en cours' : 'En attente'}</b></div></div>
+          <section className="core-hero" aria-live="polite">
+            <p className="core-state">{coreLine}</p>
+            <div className="core-legend">
+              <span><i className="swatch task" />{queuedWork} {queuedWork > 1 ? 'tâches' : 'tâche'} en file</span>
+              <span><i className="swatch objective" />{objectivesActive} {objectivesActive > 1 ? 'objectifs actifs' : 'objectif actif'}</span>
+              <span><i className="swatch process" />{processesRunning} processus en cours</span>
+            </div>
           </section>
           <section className="chat">
-            <div className="chathead"><b>Conversation</b><span>Think → Act → Observe</span></div>
+            <div className="chathead"><b>Conversation</b><span>{messages.filter(m => m.role === 'user').length} demandes</span></div>
             <div className="messages">
-              {messages.map((message, index) => <div className={`message ${message.role}`} key={index}><div className="avatar">{message.role === 'assistant' ? <Bot size={16} /> : 'VOUS'}</div><div className="bubble">{message.content}</div></div>)}
+              {messages.map((message, index) => <div className={`message ${message.role}`} key={index}><div className="avatar">{message.role === 'assistant' ? <Bot size={16} /> : 'Vous'}</div><div className="bubble">{message.content}
+                {message.trace && message.trace.length > 0 && <details className="trace"><summary>{message.trace.length} {message.trace.length > 1 ? 'actions exécutées' : 'action exécutée'}</summary>
+                  <ol>{message.trace.map((step, stepIndex) => <li key={stepIndex} className={step.success ? 'ok' : 'ko'}><b>{step.tool}</b>{step.arguments && Object.keys(step.arguments).length > 0 && <code>{JSON.stringify(step.arguments).slice(0, 160)}</code>}{step.error && <small>{step.error}</small>}</li>)}</ol>
+                </details>}
+              </div></div>)}
               {busy && <div className="working">Automaton réfléchit et agit…</div>}
             </div>
             <div className="composer">
               <textarea value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="Décris une tâche à réaliser…" rows={2} />
-              <button onClick={() => void send()} disabled={busy || !prompt.trim()}><Send size={17} /></button>
+              <button onClick={() => void send()} disabled={busy || !prompt.trim()} aria-label="Envoyer"><Send size={17} /></button>
             </div>
-            <small className="hint">Entrée pour envoyer · Maj + Entrée pour une nouvelle ligne · Actions limitées au workspace</small>
+            <small className="hint">Entrée pour envoyer, Maj + Entrée pour aller à la ligne. L'agent n'agit que dans le workspace.</small>
           </section>
           <section className="workspace">
-            <div className="chathead"><b><Folder size={15} /> Espace de travail</b><span>backend/workspace</span></div>
-            {workspace.length ? workspace.map(file => <div className="file" key={file}>{file}</div>) : <p className="empty">Aucun fichier pour le moment.</p>}
+            <div className="chathead"><b><Folder size={15} /> Espace de travail</b><span>{workspace.length} fichiers</span></div>
+            {workspace.length ? workspace.map(file => <button className="file filebtn" key={file} onClick={() => void openFile(file)}><span><FileText size={13} /> {file}</span><small>Ouvrir</small></button>) : <p className="empty">Aucun fichier pour le moment. Demande à l'agent d'en créer un.</p>}
           </section>
         </>}
 
@@ -318,13 +420,15 @@ export default function App() {
           <label>Nouvelle tâche<textarea rows={4} value={taskPrompt} onChange={e => setTaskPrompt(e.target.value)} placeholder="Décris une tâche à exécuter par Automaton…" /></label>
           <button className="primary" disabled={!taskPrompt.trim()} onClick={() => void enqueueTask()}><Play size={15} /> Ajouter à la file</button>
           <div className="tasktoolbar"><h3>Tâches ({tasks.length})</h3><button className="secondary" onClick={() => void refreshTasks()}>Actualiser</button></div>
-          {tasks.length ? tasks.map(task => <article className="taskrow" key={task.id}>
+          <div className="chips" role="group" aria-label="Filtrer par état">{taskFilters.map(filter => <button key={filter.id} className={`chip ${taskFilter === filter.id ? 'on' : ''}`} aria-pressed={taskFilter === filter.id} onClick={() => setTaskFilter(filter.id)}>{filter.label}<span>{filter.id === 'all' ? tasks.length : taskCounts[filter.id] ?? 0}</span></button>)}</div>
+          {visibleTasks.length ? visibleTasks.map(task => <article className="taskrow" key={task.id}>
             <div className="taskmeta"><b>#{task.id}</b><span className={`statuspill ${task.status}`}>{task.status}</span><small>{task.created_at}</small></div>
             <p>{task.prompt}</p>
             {task.result && <div className="taskoutput">{task.result}</div>}
             {task.error && <div className="taskerror">{task.error}</div>}
-            {task.status === 'queued' && <button className="dangericon" onClick={() => void cancelTask(task.id)} title="Annuler la tâche"><Trash2 size={16} /></button>}
-          </article>) : <p className="empty">La file est vide.</p>}
+            {task.status === 'queued' && <button className="dangericon" onClick={() => void cancelTask(task.id)} title="Annuler la tâche" aria-label={`Annuler la tâche ${task.id}`}><Trash2 size={16} /></button>}
+            {(task.status === 'failed' || task.status === 'cancelled') && <button className="secondary" onClick={() => void requeueTask(task)}><RotateCcw size={13} /> Remettre en file</button>}
+          </article>) : <p className="empty">{tasks.length ? 'Aucune tâche dans cet état.' : 'La file est vide. Ajoute une tâche ci-dessus.'}</p>}
         </section>}
 
 
@@ -353,7 +457,10 @@ export default function App() {
             </div>
             {objectiveRevisions[goal.id]?.map(revision=><div className="revisionrow" key={revision.id}><b>Plan v{revision.revision} · {revision.reason}</b><small>{revision.created_at}</small><pre>{JSON.parse(revision.plan_json).map((step:{title:string;description:string},index:number)=>`${index+1}. ${step.title} — ${step.description}`).join('\n')}</pre></div>)}
             {objectiveEvents[goal.id]?.map(event=><div className="runrow" key={event.id}><span className="statuspill">{event.event_type}</span><div><b>{event.message}</b><small>{event.created_at}</small>{event.details && <small>{event.details}</small>}</div></div>)}
-            {goal.steps?.map(step=><div className="runrow" key={step.id}><span className={`statuspill ${step.status}`}>{step.status}</span><div><b>{step.position}. {step.title}</b><small>{step.description}</small>{step.result && <small>Résultat : {step.result}</small>}{step.error && <small className="taskerror">{step.error}</small>}</div>{step.status==='failed' && <button className="secondary" onClick={()=>void retryObjectiveStep(goal.id,step.id)}>Relancer</button>}</div>)}
+            {goal.steps && goal.steps.length > 0 && <details className="steps" open={goal.steps.some(step=>step.status==='failed')}>
+              <summary>Étapes du plan ({goal.completed_steps || 0}/{goal.total_steps || 0})</summary>
+              {goal.steps.map(step=><div className="runrow" key={step.id}><span className={`statuspill ${step.status}`}>{step.status}</span><div><b>{step.position}. {step.title}</b><small>{step.description}</small>{step.result && <small>Résultat : {step.result}</small>}{step.error && <small className="taskerror">{step.error}</small>}</div>{step.status==='failed' && <button className="secondary" onClick={()=>void retryObjectiveStep(goal.id,step.id)}>Relancer</button>}</div>)}
+            </details>}
           </article>) : <p className="empty">Aucun objectif défini.</p>}
         </section>}
 
@@ -374,8 +481,10 @@ export default function App() {
           <label>Nouveau souvenir<textarea rows={3} value={memoryText} onChange={e => setMemoryText(e.target.value)} placeholder="Information à conserver entre les sessions…" /></label>
           <div className="formgrid"><label>Tags<input value={memoryTags} onChange={e => setMemoryTags(e.target.value)} placeholder="projet, préférence…" /></label><label>Importance<select value={importance} onChange={e => setImportance(Number(e.target.value))}>{[1,2,3,4,5].map(n => <option key={n} value={n}>{n} / 5</option>)}</select></label></div>
           <button className="primary" onClick={() => void saveMemory()} disabled={!memoryText.trim()}>Enregistrer le souvenir</button>
-          <h3>Souvenirs enregistrés ({memories.length})</h3>
-          {memories.length ? memories.map(item => <div className="memoryrow" key={item.id}><div><b>{item.content}</b><small>{item.tags || 'Sans tags'} · importance {item.importance} · {item.created_at}</small></div><button className="dangericon" onClick={() => void deleteMemory(item.id)} title="Supprimer"><Trash2 size={16} /></button></div>) : <p className="empty">Aucun souvenir enregistré.</p>}
+          <div className="tasktoolbar"><h3>Souvenirs enregistrés ({memories.length})</h3>
+            <label className="searchfield"><Search size={14} /><input type="search" value={memoryQuery} onChange={e => setMemoryQuery(e.target.value)} placeholder="Rechercher dans le contenu ou les tags" aria-label="Rechercher un souvenir" /></label>
+          </div>
+          {memories.length ? memories.map(item => <div className="memoryrow" key={item.id}><span className="importance" aria-label={`Importance ${item.importance} sur 5`}>{'●'.repeat(item.importance)}<i>{'●'.repeat(5 - item.importance)}</i></span><div><b>{item.content}</b><small>{item.tags || 'Sans tags'} · {item.created_at}</small></div><button className="dangericon" onClick={() => void deleteMemory(item.id)} title="Supprimer" aria-label={`Supprimer le souvenir ${item.id}`}><Trash2 size={16} /></button></div>) : <p className="empty">{memoryQuery.trim() ? 'Aucun souvenir ne correspond à cette recherche.' : 'Aucun souvenir enregistré.'}</p>}
         </section>}
 
         {page === 'resources' && <section className="panel">
@@ -383,15 +492,15 @@ export default function App() {
           {resources && <>
             {resources.alerts.length > 0 && <div className="warning"><Activity size={17} /><span>{resources.alerts.map(alert => alert.message).join(' · ')}</span></div>}
             <div className="resourcegrid">
-              <div className="resourcecard"><small>CPU · {resources.cpu.logical_cores ?? '—'} cœurs logiques</small><b>{resources.cpu.percent.toFixed(1)} %</b><span>{resources.cpu.physical_cores ?? '—'} cœurs physiques</span><progress max="100" value={resources.cpu.percent} /></div>
-              <div className="resourcecard"><small>MÉMOIRE RAM</small><b>{resources.memory.percent.toFixed(1)} %</b><span>{formatBytes(resources.memory.used_bytes)} / {formatBytes(resources.memory.total_bytes)}</span><progress max="100" value={resources.memory.percent} /></div>
-              <div className="resourcecard"><small>STOCKAGE · DISQUE DE DONNÉES</small><b>{resources.storage.percent.toFixed(1)} %</b><span>{formatBytes(resources.storage.free_bytes)} libres / {formatBytes(resources.storage.total_bytes)}</span><progress max="100" value={resources.storage.percent} /></div>
-              <div className="resourcecard"><small>FICHIERS WORKSPACE</small><b>{resources.workspace.file_count}</b><span>{formatBytes(resources.workspace.total_bytes)} au total</span></div>
+              <div className="resourcecard"><small>Processeur, {resources.cpu.logical_cores ?? '?'} cœurs logiques</small><b>{resources.cpu.percent.toFixed(1)} %</b><span>Tendance des 3 dernières minutes</span><Sparkline values={samples.cpu} label="Historique CPU" /></div>
+              <div className="resourcecard"><small>Mémoire vive</small><b>{resources.memory.percent.toFixed(1)} %</b><span>{formatBytes(resources.memory.used_bytes)} sur {formatBytes(resources.memory.total_bytes)}</span><Sparkline values={samples.memory} label="Historique RAM" /></div>
+              <div className="resourcecard"><small>Disque des données</small><b>{resources.storage.percent.toFixed(1)} %</b><span>{formatBytes(resources.storage.free_bytes)} libres sur {formatBytes(resources.storage.total_bytes)}</span><progress max="100" value={resources.storage.percent} /></div>
+              <div className="resourcecard"><small>Fichiers du workspace</small><b>{resources.workspace.file_count}</b><span>{formatBytes(resources.workspace.total_bytes)} au total</span></div>
             </div>
             <h3>Trafic réseau cumulé depuis le démarrage</h3>
             {resources.network ? <div className="resourcegrid">
-              <div className="resourcecard"><small>ENVOYÉ</small><b>{formatBytes(resources.network.bytes_sent)}</b><span>{resources.network.packets_sent.toLocaleString('fr-FR')} paquets</span></div>
-              <div className="resourcecard"><small>REÇU</small><b>{formatBytes(resources.network.bytes_received)}</b><span>{resources.network.packets_received.toLocaleString('fr-FR')} paquets</span></div>
+              <div className="resourcecard"><small>Envoyé</small><b>{formatBytes(resources.network.bytes_sent)}</b><span>{resources.network.packets_sent.toLocaleString('fr-FR')} paquets</span></div>
+              <div className="resourcecard"><small>Reçu</small><b>{formatBytes(resources.network.bytes_received)}</b><span>{resources.network.packets_received.toLocaleString('fr-FR')} paquets</span></div>
             </div> : <p className="empty">Compteurs réseau indisponibles.</p>}
             <h3>Seuils d'alerte</h3>
             <div className="formgrid">
@@ -414,7 +523,8 @@ export default function App() {
         {page === 'processes' && <section className="panel">
           <div className="panelintro"><Cpu /><div><h2>Processus gérés par Automaton</h2><p>Démarre uniquement des scripts Python déjà présents dans le workspace. Les processus, PID, états et journaux sont suivis dans SQLite.</p></div></div>
           <div className="warning"><ShieldCheck size={17} /><span>Windows Sandbox fournit une isolation système plus forte : réseau, presse-papiers et vGPU désactivés ; dossier du script et runtime Python en lecture seule ; seul un dossier de journaux dédié est accessible en écriture. Windows Sandbox doit être activé sur Windows Pro/Entreprise/Éducation. Le profil Job Object reste disponible comme mode de compatibilité et ne bloque pas les accès fichiers/réseau du compte.</span></div>
-          <label>Script Python du workspace<input value={processPath} onChange={e=>setProcessPath(e.target.value)} placeholder="workers/worker.py" /></label>
+          <label>Script Python du workspace<input list="workspace-scripts" value={processPath} onChange={e=>setProcessPath(e.target.value)} placeholder={workspace.find(file => file.endsWith('.py')) ?? 'workers/worker.py'} /></label>
+          <datalist id="workspace-scripts">{workspace.filter(file => file.endsWith('.py')).map(file => <option key={file} value={file} />)}</datalist>
           <label>Profil d'isolation<select value={processIsolation} onChange={e=>setProcessIsolation(e.target.value as 'job_object'|'windows_sandbox')}><option value="windows_sandbox">Windows Sandbox · isolation renforcée</option><option value="job_object">Job Object · limites de ressources</option></select></label>
           <button className="primary" disabled={!processPath.trim()} onClick={()=>void startManagedProcess()}><Play size={15}/> Démarrer le processus</button>
           <div className="tasktoolbar"><h3>Processus suivis ({managedProcesses.length})</h3><button className="secondary" onClick={()=>void refreshProcesses()}>Actualiser</button></div>
@@ -443,9 +553,17 @@ export default function App() {
           <div className="warning"><ShieldCheck size={17} /><span>Fonction désactivée par défaut. Elle exige AUTO_IMPROVE_ENABLED=true, un dépôt Git propre et un patch limité à backend/app/. Le patch appliqué n’est pas automatiquement commité.</span></div>
           <label>Patch unifié<textarea className="patcharea" rows={15} value={patch} onChange={e => setPatch(e.target.value)} placeholder={'diff --git a/backend/app/... b/backend/app/...\n--- a/backend/app/...\n+++ b/backend/app/...'} /></label>
           <button className="primary" disabled={busy || !patch.trim()} onClick={() => void applyPatch()}><GitBranch size={15} /> {busy ? 'Validation…' : 'Valider et appliquer le patch'}</button>
+          {patchDiff && <><h3>Fichiers modifiés par le dernier patch</h3><pre className="diffstat">{patchDiff}</pre></>}
         </section>}
-        <footer><Zap size={13} /> Automaton · Exécution locale · Clés API conservées côté backend</footer>
+        <footer><Zap size={13} /> Exécution locale. Les clés API restent dans le backend.</footer>
       </main>
     </div>
+    {preview && <div className="drawer-backdrop" onClick={() => setPreview(null)}>
+      <aside className="drawer" role="dialog" aria-modal="true" aria-label={`Aperçu de ${preview.path}`} onClick={event => event.stopPropagation()}>
+        <div className="chathead"><b><FileText size={15} /> {preview.path}</b><button className="iconbtn" onClick={() => setPreview(null)} aria-label="Fermer l'aperçu" autoFocus><X size={16} /></button></div>
+        <pre>{preview.content || 'Fichier vide.'}</pre>
+      </aside>
+    </div>}
+    </>
   );
 }

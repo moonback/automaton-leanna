@@ -103,6 +103,20 @@ def public_config():
 def workspace():
     return {"files": tools.list_files()}
 
+@app.get("/workspace/file")
+def workspace_file(path: str):
+    """Read-only preview; tools.read_file confines the path to the workspace and caps size."""
+    try:
+        return {"path": path, "content": tools.read_file(path)}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Fichier introuvable")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc) if isinstance(exc, ValueError) else "Fichier non textuel")
+
+@app.get("/summary")
+def activity_summary():
+    return db.summary()
+
 @app.get("/history")
 def history():
     return {"messages": db.history(100)}
