@@ -160,7 +160,7 @@ Le lancement échoue explicitement si Windows Sandbox n'est pas installé/activ�
 - Windows 10/11 Pro, Entreprise ou Éducation avec la fonctionnalité **Windows Sandbox** activée.
 - Redémarrer Windows après activation de la fonctionnalité.
 - Le script peut lire les fichiers présents dans son dossier parent et le runtime Python monté. Ne stockez pas de secrets dans ces emplacements.
-- Le dossier de sortie mappé est accessible en écriture depuis le guest ; son contenu et les journaux doivent être considérés comme non fiables.
+- Le dossier de sortie mappé est accessible en écriture depuis le guest ; le répertoire de travail du script pointe vers ce dossier, et ses journaux/sorties doivent être considérés comme non fiables. La sortie console est plafonnée à 2 Mo.
 - Une fermeture normale du backend demande l'arrêt des sessions qu'il possède. Après un crash brutal du backend, une session Sandbox peut rester ouverte : fermez-la manuellement depuis Windows Sandbox. Les anciens PID ne sont jamais tués automatiquement après redémarrage.
 - Le profil Sandbox ne garantit pas un plafond CPU strict. La mémoire du guest est limitée à 2 Go ; les limites CPU/processus détaillées restent celles du profil Job Object, pas du guest Sandbox.
 - Les tests automatisés valident la génération de configuration et les garde-fous ; ils ne remplacent pas un test réel sur une édition Windows compatible.
