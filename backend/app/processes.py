@@ -15,6 +15,8 @@ LOG_DIR = DATA / "process-logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 _LOCK = threading.RLock()
 _HANDLES = {}
+_LOG_THREADS = {}
+MAX_LOG_BYTES = 2 * 1024 * 1024
 
 
 def _pid_alive(pid):
@@ -27,6 +29,9 @@ def _pid_alive(pid):
 
 def init():
     """Mark previously running records orphaned; never signal a PID after restart."""
+    with _LOCK:
+        _HANDLES.clear()
+        _LOG_THREADS.clear()
     with db.connect() as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS managed_processes (
             id INTEGER PRIMARY KEY,
@@ -62,6 +67,7 @@ def _refresh(process_id):
                         updated_at=CURRENT_TIMESTAMP,stopped_at=CURRENT_TIMESTAMP
                         WHERE id=? AND status IN ('running','stopping')""", (code, process_id))
                 _HANDLES.pop(process_id, None)
+                _LOG_THREADS.pop(process_id, None)
     return _record(process_id)
 
 
@@ -71,26 +77,40 @@ def start(script_path):
     log_path = LOG_DIR / f"process-{token}.log"
     command = [os.sys.executable, "-I", "-B", str(script)]
     kwargs = {"cwd": str(WORKSPACE), "env": safe_environment(), "stdin": subprocess.DEVNULL,
-              "stdout": None, "stderr": subprocess.STDOUT, "shell": False}
+              "stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "shell": False}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
         kwargs["preexec_fn"] = _limits()
-    log_file = open(log_path, "ab", buffering=0)
-    kwargs["stdout"] = log_file
-    try:
-        process = subprocess.Popen(command, **kwargs)
-    except Exception:
-        log_file.close()
-        raise
-    log_file.close()
+    process = subprocess.Popen(command, **kwargs)
+
+    def drain_output(pipe, destination):
+        written = 0
+        try:
+            with open(destination, "ab", buffering=0) as output:
+                while True:
+                    chunk = pipe.read(8192)
+                    if not chunk:
+                        break
+                    remaining = MAX_LOG_BYTES - written
+                    if remaining > 0:
+                        output.write(chunk[:remaining])
+                        written += min(len(chunk), remaining)
+                if written >= MAX_LOG_BYTES:
+                    output.write(b"\n[Automaton: log limit reached; further output discarded]\n")
+        finally:
+            pipe.close()
+
+    reader = threading.Thread(target=drain_output, args=(process.stdout, log_path), daemon=True)
+    reader.start()
     with db.connect() as conn:
         cur = conn.execute("""INSERT INTO managed_processes(token,pid,script,status,log_path)
             VALUES(?,?,?,'running',?)""", (token, process.pid, str(script.relative_to(WORKSPACE)), str(log_path)))
         process_id = cur.lastrowid
     with _LOCK:
         _HANDLES[process_id] = process
+        _LOG_THREADS[process_id] = reader
     return _refresh(process_id)
 
 
@@ -121,7 +141,8 @@ def stop(process_id):
                          (process_id,))
         try:
             if os.name == "nt":
-                process.terminate()
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                               capture_output=True, timeout=5, check=False)
             else:
                 os.killpg(process.pid, signal.SIGTERM)
             try:
